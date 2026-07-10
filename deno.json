@@ -1,0 +1,16 @@
+{
+    "name": "@velotype/velojson",
+    "license": "MIT",
+    "version": "0.0.1",
+    "exports": {
+        ".": "./src/velojson.ts"
+    },
+    "publish": {
+        "exclude": [
+            "tests/"
+        ]
+    },
+    "tasks": {
+        "test": "cd tests && deno test"
+    }
+}
