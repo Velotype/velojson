@@ -266,6 +266,12 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
  * Encode any JSON-representable value into a VSON binary buffer.
  *
  * Note: Will throw on encoding errors
+ *
+ * Example:
+ * ```ts
+ * const obj = { name: "Some name", age: 20, address: null }
+ * const objBinary: Uint8Array = encodeVSON(obj)
+ * ```
  */
 export function encodeVSON(value: JSONValue): Uint8Array {
     const writer = new ByteWriter()
@@ -358,6 +364,16 @@ function decodeValue(reader: ByteReader): DecodedEntry {
  * Decode a VSON binary buffer back into a JSON-representable value.
  *
  * Note: Will throw on decoding errors
+ *
+ * Example:
+ * ```ts
+ * const startObj = { name: "Some name", age: 20, address: null }
+ * const objBinary: Uint8Array = encodeVSON(startObj)
+ * const endObj = decodeVSON(objBinary)
+ *
+ * console.log(JSON.stringify(endObj))
+ * // Expected output: {"name":"Some name","age":20,"address":null}
+ * ```
  */
 export function decodeVSON(data: Uint8Array): JSONValue {
     const reader = new ByteReader(data)

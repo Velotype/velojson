@@ -3,15 +3,17 @@ Binary JSON encoder / decoder
 
 velojson or VSON is a Binary wire format to encode / decode generic JSON data, any data representable with JSON is representable with VSON and vice-versa.
 
-Native wire types:
-* 0 - null
-* 1 - boolean false
-* 2 - boolean true
-* 3 - number (positive integer)
-* 4 - number (double)
-* 5 - string
-* 6 - object
-* 7 - array
+Example:
+```ts
+import { encodeVSON, decodeVSON } from 'jsr:@velotype/velojson'
+
+const startObj = { name: "Some name", age: 20, address: null }
+const objBinary: Uint8Array = encodeVSON(startObj)
+const endObj = decodeVSON(objBinary)
+
+console.log(JSON.stringify(endObj))
+// Expected output: {"name":"Some name","age":20,"address":null}
+```
 
 ## Encoding format:
 
@@ -22,6 +24,16 @@ A - a pos varint constructed by encoding the bits of the key length and appendin
 B - UTF-8 encoded string representing the key (if present)
 
 C - the encoded value of the wire type (encoding depends on the wire type)
+
+Native wire types:
+* 0 - null
+* 1 - boolean false
+* 2 - boolean true
+* 3 - number (positive integer)
+* 4 - number (double)
+* 5 - string
+* 6 - object
+* 7 - array
 
 ## Per-value encoding
 
@@ -91,9 +103,8 @@ VALUE is a series of `VStruct` encoded values with a requirement that all have z
 Encoding and decoding works similarly to `JSON.parse(JSON.stringify(value))`
 
 This means:
-* Objects with a key that has a value of `undefined`, that key is not encoded
+* For Objects with a key that has a value of `undefined`, that key is not encoded
   * For example an object like `{ a: 1, b: null, c: undefined }` is encoded the same as `{ a: 1, b: null }`
-* Arrays with a value of `undefined`, that value is mutated to `null`
+* For Arrays with a value of `undefined`, that value is mutated to `null`
   * For example an object like `[ 1, null, undefined ]` is encoded the same as `[ 1, null, null ]`
-
-If `undefined` is passed directly to `encodeVSON()` then that is encoded as `null`
+* If `undefined` is passed directly to `encodeVSON()` then that is encoded as `null`
