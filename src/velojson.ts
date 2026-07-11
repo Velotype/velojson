@@ -22,6 +22,9 @@
  *     how string LENGTH is a byte length), enabling skip-without-parsing.
  */
 
+/**
+ * Type representing encodable values (aka: plain JSON objects)
+ */
 export type JSONValue =
     | null
     | boolean
@@ -30,15 +33,26 @@ export type JSONValue =
     | JSONValue[]
     | { [key: string]: JSONValue }
 
+/**
+ * Enum representing the different wire encoding types
+ */
 export enum WireType {
+    /** `null` */
     Null = 0,
+    /** `false` */
     False = 1,
+    /** `true` */
     True = 2,
+    /** A non-negative integer (zero or positive) */
     PosInt = 3,
+    /** `number` */
     Double = 4,
+    /** typeof string */
     String = 5,
+    /** typeof object */
     Object = 6,
-    Array = 7,
+    /** typeof array */
+    Array = 7
 }
 
 const textEncoder = new TextEncoder()
@@ -248,7 +262,11 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
     }
 }
 
-/** Encode any JSON-representable value into a VSON binary buffer. */
+/**
+ * Encode any JSON-representable value into a VSON binary buffer.
+ *
+ * Note: Will throw on encoding errors
+ */
 export function encodeVSON(value: JSONValue): Uint8Array {
     const writer = new ByteWriter()
     encodeValue(writer, null, value, true)
@@ -336,7 +354,11 @@ function decodeValue(reader: ByteReader): DecodedEntry {
     return { key, value }
 }
 
-/** Decode a VSON binary buffer back into a JSON-representable value. */
+/**
+ * Decode a VSON binary buffer back into a JSON-representable value.
+ *
+ * Note: Will throw on decoding errors
+ */
 export function decodeVSON(data: Uint8Array): JSONValue {
     const reader = new ByteReader(data)
     const entry = decodeValue(reader)
