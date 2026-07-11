@@ -19,7 +19,7 @@ console.log(JSON.stringify(endObj))
 
 VStruct - `{A: key length ++ wire type}{B?: key}{C?: encoded value}`
 
-A - a pos varint constructed by encoding the bits of the key length and appending 3 bits representing the wire time
+A - a pos varint constructed by encoding the bits of the key length and appending 3 bits representing the wire type
 
 B - UTF-8 encoded string representing the key (if present)
 
