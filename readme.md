@@ -92,8 +92,8 @@ Encoding and decoding works similarly to `JSON.parse(JSON.stringify(value))`
 
 This means:
 * Objects with a key that has a value of `undefined`, that key is not encoded
-** For example an object like `{ a: 1, b: null, c: undefined }` is encoded the same as `{ a: 1, b: null }`
+  * For example an object like `{ a: 1, b: null, c: undefined }` is encoded the same as `{ a: 1, b: null }`
 * Arrays with a value of `undefined`, that value is mutated to `null`
-** For example an object like `[ 1, null, undefined ]` is encoded the same as `[ 1, null, null ]`
+  * For example an object like `[ 1, null, undefined ]` is encoded the same as `[ 1, null, null ]`
 
 If `undefined` is passed directly to `encodeVSON()` then that is encoded as `null`
