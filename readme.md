@@ -8,7 +8,12 @@ Example:
 import { encodeVSON, decodeVSON } from 'jsr:@velotype/velojson'
 
 const startObj = { name: "Some name", age: 20, address: null }
+
 const objBinary: Uint8Array = encodeVSON(startObj)
+
+console.log(objBinary)
+// Expected output: Uint8Array(30) [ 6, 28, 37, 110, 97, 109, 101, 9, 83, 111, 109, 101, 32, 110, 97, 109, 101, 27, 97, 103, 101, 20, 56, 97, 100, 100, 114, 101, 115, 115 ]
+
 const endObj = decodeVSON(objBinary)
 
 console.log(JSON.stringify(endObj))
