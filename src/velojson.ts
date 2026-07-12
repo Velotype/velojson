@@ -10,21 +10,47 @@
  *   B: UTF-8 key bytes (only if keyLength > 0)
  *   C: encoded value payload (wire-type dependent; absent for null/false/true)
  *
- * NOTE ON SPEC AMBIGUITIES RESOLVED HERE (see accompanying explanation):
- *   - The 3-bit wire-type suffix in "A" is the type's own numeric value
- *     (0..7 in binary), not the literal "100" shown for every type past
- *     null/false/true in the source README (that repetition was a copy/paste
- *     artifact — only type 4 can correctly be 100).
- *   - Varints are LEB128-style: 7 data bits + continuation bit, base-256,
- *     least-significant group first.
- *   - Doubles are IEEE-754 8-byte, little-endian.
- *   - Object/array LENGTH is the byte length of the encoded body (mirrors
- *     how string LENGTH is a byte length), enabling skip-without-parsing.
+ * PERFORMANCE NOTES (this version vs. the original):
+ *   - ByteWriter is backed by a single growable Uint8Array instead of a
+ *     plain number[]. The original pushed each byte as a boxed element and
+ *     then did one final `new Uint8Array(this.chunks)` conversion; this
+ *     version writes bytes directly into typed-array storage and grows by
+ *     doubling, so bulk copies use native TypedArray#set (memcpy-like)
+ *     instead of a per-element push loop.
+ *   - writeVarint/readVarint use a bitwise fast path (>>>, &) for values
+ *     under 2^32, plus a single-byte early-out for values < 128 (the
+ *     common case for short object-key headers and small numbers). JS's
+ *     bitwise operators truncate to 32 bits, so anything at or above 2^32
+ *     falls back to the original div/mod approach, which is required
+ *     anyway to support the full safe-integer range up to 2^53-1.
+ *   - Nested object/array bodies are still built in a scratch ByteWriter
+ *     and copied into the parent (same structure as the original) — but
+ *     because ByteWriter.toUint8Array() now returns a zero-copy subarray
+ *     view rather than allocating+copying a fresh array, and the copy
+ *     into the parent is a single .set() call, this no longer costs an
+ *     extra allocation at every nesting level. (A two-pass "compute sizes
+ *     then write once" scheme would avoid the copy-per-level entirely, but
+ *     changes more of the code for a benefit that's only worth it if
+ *     profiling shows deeply-nested structures are actually a bottleneck —
+ *     see the writeup.)
+ *   - Object decoding uses direct property assignment (obj[key] = value)
+ *     instead of Object.defineProperty. This is safe against
+ *     __proto__-based prototype pollution specifically *because* the
+ *     target object is created via Object.create(null): with no
+ *     Object.prototype in its chain, "__proto__" has no special accessor
+ *     and is just an ordinary own property name.
+ *   - Encoded key bytes are cached by key string (bounded to 4096 distinct
+ *     keys). Real-world JSON is overwhelmingly "arrays of records sharing
+ *     a shape" — the same field names recur constantly — so re-running
+ *     TextEncoder.encode() on "id", "name", etc. for every single record
+ *     is redundant work once the same key has been seen. The cache is
+ *     capped so inputs with many one-off/unique keys can't grow it
+ *     unboundedly; past the cap, keys are just encoded directly as before.
+ *
+ * Wire format and public API are unchanged. Output is byte-identical to
+ * the original implementation for the same input (verified in verify.ts).
  */
 
-/**
- * Type representing encodable values (aka: plain JSON objects)
- */
 export type JSONValue =
     | null
     | boolean
@@ -33,9 +59,6 @@ export type JSONValue =
     | JSONValue[]
     | { [key: string]: JSONValue }
 
-/**
- * Enum representing the different wire encoding types
- */
 export enum WireType {
     /** `null` */
     Null = 0,
@@ -58,19 +81,65 @@ export enum WireType {
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 
+/** 2^32 — the point past which bitwise ops (>>>, &) stop being safe/correct. */
+const UINT32_LIMIT = 0x100000000
+
+// Real-world JSON is overwhelmingly "arrays of records with a shared shape"
+// (the same field names over and over). Re-running TextEncoder.encode() on
+// "id", "name", "email", etc. for every single record is pure waste since
+// strings are immutable — the same key always produces the same bytes.
+// Cache is capped so pathological inputs (e.g. objects keyed by unique IDs)
+// can't grow it unboundedly; once full we just stop caching new keys and
+// encode them directly, same as before.
+const KEY_CACHE_LIMIT = 4096
+const keyBytesCache = new Map<string, Uint8Array>()
+
+function getKeyBytes(key: string): Uint8Array {
+    let bytes = keyBytesCache.get(key)
+    if (bytes === undefined) {
+        bytes = textEncoder.encode(key)
+        if (keyBytesCache.size < KEY_CACHE_LIMIT) {
+            keyBytesCache.set(key, bytes)
+        }
+    }
+    return bytes
+}
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
 
 class ByteWriter {
-    private chunks: number[] = [];
+    private buf: Uint8Array
+    private len = 0
+
+    constructor(initialCapacity = 64) {
+        this.buf = new Uint8Array(initialCapacity)
+    }
+
+    private ensureCapacity(extra: number): void {
+        const needed = this.len + extra
+        if (needed <= this.buf.length) {
+            return
+        }
+        let newCap = this.buf.length * 2 || 64
+        while (newCap < needed) {
+            newCap *= 2
+        }
+        const newBuf = new Uint8Array(newCap)
+        newBuf.set(this.buf.subarray(0, this.len))
+        this.buf = newBuf
+    }
 
     writeByte(b: number): void {
-        this.chunks.push(b & 0xff);
+        this.ensureCapacity(1)
+        this.buf[this.len++] = b & 0xff
     }
 
     writeBytes(bytes: Uint8Array): void {
-        for (let i = 0; i < bytes.length; i++) this.chunks.push(bytes[i]);
+        this.ensureCapacity(bytes.length)
+        this.buf.set(bytes, this.len)
+        this.len += bytes.length
     }
 
     /** LEB128-style unsigned varint. Requires a safe, non-negative integer. */
@@ -81,35 +150,63 @@ class ByteWriter {
         if (!Number.isSafeInteger(value)) {
             throw new Error(`writeVarint: value ${value} exceeds safe integer range`)
         }
-        let v = value
-        do {
-            let byte = v % 128
-            v = Math.floor(v / 128)
-            if (v !== 0) {
-                byte |= 0x80
-            }
-            this.writeByte(byte)
-        } while (v !== 0)
+
+        // Fast path: single-byte varint (values 0-127). Very common — every
+        // object-key header with a short key name lands here, as does any
+        // small integer field.
+        if (value < 128) {
+            this.writeByte(value)
+            return
+        }
+
+        this.ensureCapacity(10) // worst case for a 53-bit safe integer
+
+        if (value < UINT32_LIMIT) {
+            // Bitwise ops are safe here: >>> and & both operate correctly
+            // on the low 32 bits regardless of sign interpretation, for
+            // any value that actually fits in 32 bits.
+            let v = value >>> 0
+            do {
+                let byte = v & 0x7f
+                v >>>= 7
+                if (v !== 0) byte |= 0x80
+                this.buf[this.len++] = byte
+            } while (v !== 0)
+        } else {
+            // Slow path (only reached above 2^32-1): identical algorithm to
+            // the above, div/mod based, since bitwise ops would truncate.
+            let v = value
+            do {
+                let byte = v % 128
+                v = Math.floor(v / 128)
+                if (v !== 0) {
+                    byte |= 0x80
+                }
+                this.buf[this.len++] = byte
+            } while (v !== 0)
+        }
     }
 
     writeDouble(value: number): void {
-        const buf = new ArrayBuffer(8);
-        new DataView(buf).setFloat64(0, value, true /* little-endian */);
-        this.writeBytes(new Uint8Array(buf));
+        this.ensureCapacity(8)
+        const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.len, 8)
+        view.setFloat64(0, value, true /* little-endian */)
+        this.len += 8
     }
 
     writeString(str: string): void {
-        const bytes = textEncoder.encode(str);
-        this.writeVarint(bytes.length);
-        this.writeBytes(bytes);
+        const bytes = textEncoder.encode(str)
+        this.writeVarint(bytes.length)
+        this.writeBytes(bytes)
     }
 
+    /** Zero-copy view of the written bytes. Valid until this writer is written to again. */
     toUint8Array(): Uint8Array {
-        return new Uint8Array(this.chunks);
+        return this.buf.subarray(0, this.len)
     }
 
     get length(): number {
-        return this.chunks.length;
+        return this.len
     }
 }
 
@@ -145,10 +242,16 @@ class ByteReader {
     }
 
     readVarint(): number {
-        let result = 0
-        let multiplier = 1
+        // Fast path: single-byte varint
+        const first = this.readByte()
+        if ((first & 0x80) === 0) {
+            return first
+        }
+
+        let result = first & 0x7f
+        let multiplier = 128
         let byte: number
-        let bytesRead = 0
+        let bytesRead = 1
         do {
             byte = this.readByte()
             result += (byte & 0x7f) * multiplier
@@ -209,7 +312,7 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
     if (value === undefined && isInArray === false) {
         return
     }
-    const keyBytes = key !== null ? textEncoder.encode(key) : null
+    const keyBytes = key !== null ? getKeyBytes(key) : null
     const keyLength = keyBytes ? keyBytes.length : 0
     const wireType = getWireType((value === undefined && isInArray === true) ? null : value)
 
@@ -276,7 +379,10 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
 export function encodeVSON(value: JSONValue): Uint8Array {
     const writer = new ByteWriter()
     encodeValue(writer, null, value, true)
-    return writer.toUint8Array()
+    // .slice() here so the public function returns an exact-length,
+    // independently-owned buffer, not a view into a possibly-larger
+    // over-allocated backing buffer.
+    return writer.toUint8Array().slice()
 }
 
 // ---------------------------------------------------------------------------
@@ -329,12 +435,10 @@ function decodeValue(reader: ByteReader): DecodedEntry {
                 if (entry.key === null) {
                     throw new Error('velojson: object entry is missing a required key')
                 }
-                Object.defineProperty(obj, entry.key, {
-                    value: entry.value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true
-                })
+                // Plain assignment is safe here because obj has
+                // no prototype at all, so there's no inherited __proto__
+                // accessor to trigger
+                obj[entry.key] = entry.value
             }
             value = obj
         break
