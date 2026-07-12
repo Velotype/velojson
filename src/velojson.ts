@@ -10,49 +10,6 @@
  *   B: UTF-8 key bytes (only if keyLength > 0)
  *   C: encoded value payload (wire-type dependent; absent for null/false/true)
  *
- * PERFORMANCE NOTES (this version vs. the original):
- *   - ByteWriter is backed by a single growable Uint8Array instead of a
- *     plain number[]. The original pushed each byte as a boxed element and
- *     then did one final `new Uint8Array(this.chunks)` conversion; this
- *     version writes bytes directly into typed-array storage and grows by
- *     doubling, so bulk copies use native TypedArray#set (memcpy-like)
- *     instead of a per-element push loop.
- *   - writeVarint/readVarint use a bitwise fast path (>>>, &) for values
- *     under 2^32, plus a single-byte early-out for values < 128 (the
- *     common case for short object-key headers and small numbers). JS's
- *     bitwise operators truncate to 32 bits, so anything at or above 2^32
- *     falls back to the original div/mod approach, which is required
- *     anyway to support the full safe-integer range up to 2^53-1.
- *   - Nested object/array bodies are still built in a scratch ByteWriter
- *     and copied into the parent (same structure as the original) — but
- *     because ByteWriter.toUint8Array() now returns a zero-copy subarray
- *     view rather than allocating+copying a fresh array, and the copy
- *     into the parent is a single .set() call, this no longer costs an
- *     extra allocation at every nesting level. (A two-pass "compute sizes
- *     then write once" scheme would avoid the copy-per-level entirely, but
- *     changes more of the code for a benefit that's only worth it if
- *     profiling shows deeply-nested structures are actually a bottleneck —
- *     see the writeup.)
- *   - Object decoding uses direct property assignment (obj[key] = value)
- *     instead of Object.defineProperty. This is safe against
- *     __proto__-based prototype pollution specifically *because* the
- *     target object is created via Object.create(null): with no
- *     Object.prototype in its chain, "__proto__" has no special accessor
- *     and is just an ordinary own property name.
- *   - Encoded key bytes are cached by key string (bounded to 4096 distinct
- *     keys, LRU-evicted via a doubly-linked list, not Map-reinsertion — see
- *     the note by KeyCacheNode). Real-world JSON is overwhelmingly "arrays
- *     of records sharing a shape" — the same field names recur constantly
- *     — so re-running TextEncoder.encode() on "id", "name", etc. for every
- *     single record is redundant work once the same key has been seen.
- *     The cache is capped so inputs with many one-off/unique keys can't
- *     grow it unboundedly, and evicts least-recently-used rather than
- *     simply refusing new keys once full, so it adapts if the set of
- *     "hot" keys shifts over a long-running process instead of staying
- *     locked onto whichever keys happened to arrive first.
- *
- * Wire format and public API are unchanged. Output is byte-identical to
- * the original implementation for the same input (verified in verify.ts).
  */
 
 export type JSONValue =
