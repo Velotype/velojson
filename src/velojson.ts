@@ -12,6 +12,9 @@
  *
  */
 
+/**
+ * Type representing encodable values (aka: plain JSON objects)
+ */
 export type JSONValue =
     | null
     | boolean
