@@ -23,7 +23,7 @@ export type JSONValue =
     | JSONValue[]
     | { [key: string]: JSONValue }
 
-export enum WireType {
+enum WireType {
     /** `null` */
     Null = 0,
     /** `false` */
@@ -142,11 +142,7 @@ function getKeyBytes(key: string): Uint8Array {
 
 class ByteWriter {
     private buf: Uint8Array
-    /**
-     * Cached DataView over the current backing buffer.
-     * It only needs to be recreated when the backing
-     * buffer itself is replaced (on grow), not on every write.
-     */
+    /** Cached DataView over the current backing buffer */
     private bufView: DataView
     private len = 0
 
@@ -167,7 +163,7 @@ class ByteWriter {
         const newBuf = new Uint8Array(newCap)
         newBuf.set(this.buf.subarray(0, this.len))
         this.buf = newBuf
-        this.bufView = new DataView(this.buf.buffer)
+        this.bufView = new DataView(this.buf.buffer) // buffer identity changed — must refresh
     }
 
     writeByte(b: number): void {
@@ -208,7 +204,9 @@ class ByteWriter {
             do {
                 let byte = v & 0x7f
                 v >>>= 7
-                if (v !== 0) byte |= 0x80
+                if (v !== 0) {
+                    byte |= 0x80
+                }
                 this.buf[this.len++] = byte
             } while (v !== 0)
         } else {
@@ -246,6 +244,34 @@ class ByteWriter {
     get length(): number {
         return this.len
     }
+
+    /** Reuse this writer for a new value: keeps the backing buffer (and its
+     *  already-sized capacity) but discards previously written content. */
+    reset(): void {
+        this.len = 0
+    }
+}
+
+// encodeValue creates a fresh scratch ByteWriter for every nested object and
+// array to build its length-prefixed body before copying it into the parent
+// Bounded so pathologically deep nesting can't retain unbounded scratch
+// buffers; beyond the cap we just fall back to allocating each time
+const WRITER_POOL_LIMIT = 64
+const writerPool: ByteWriter[] = []
+
+function acquireWriter(): ByteWriter {
+    const writer = writerPool.pop()
+    if (writer !== undefined) {
+        writer.reset()
+        return writer
+    }
+    return new ByteWriter()
+}
+
+function releaseWriter(writer: ByteWriter): void {
+    if (writerPool.length < WRITER_POOL_LIMIT) {
+        writerPool.push(writer)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,29 +282,59 @@ class ByteReader {
     private pos = 0
     private data: Uint8Array
     private view: DataView
+    /** Read boundary for the current nested section (top-level: data.length) */
+    private limit: number
+
     constructor(data: Uint8Array) {
         this.data = data
         this.view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+        this.limit = data.length
     }
 
     get remaining(): number {
-        return this.data.length - this.pos
+        return this.limit - this.pos
     }
 
     readByte(): number {
-        if (this.pos >= this.data.length) {
+        if (this.pos >= this.limit) {
             throw new Error('velojson: unexpected end of buffer')
         }
         return this.data[this.pos++]
     }
 
     readBytes(n: number): Uint8Array {
-        if (this.pos + n > this.data.length) {
+        if (this.pos + n > this.limit) {
             throw new Error('velojson: unexpected end of buffer')
         }
         const slice = this.data.subarray(this.pos, this.pos + n)
         this.pos += n
         return slice
+    }
+
+    /**
+     * Enter a nested section of `len` bytes starting at the current
+     * position: tightens this reader's own bound instead of handing back a
+     * new ByteReader over a sliced copy, so nested objects/arrays cost no
+     * allocation. Returns the previous limit, to be restored via
+     * exitSection once the section's entries have all been read.
+     */
+    enterSection(len: number): number {
+        if (this.pos + len > this.limit) {
+            throw new Error('velojson: unexpected end of buffer')
+        }
+        const previousLimit = this.limit
+        this.limit = this.pos + len
+        return previousLimit
+    }
+
+    /** Restore the limit saved by enterSection. */
+    exitSection(previousLimit: number): void {
+        // For well-formed data this is already true (the decode loop only
+        // stops once `remaining` hits 0) — set explicitly anyway so a
+        // not-fully-consumed section can't misalign whatever's read next,
+        // rather than silently producing corrupted results.
+        this.pos = this.limit
+        this.limit = previousLimit
     }
 
     readVarint(): number {
@@ -305,7 +361,7 @@ class ByteReader {
     }
 
     readDouble(): number {
-        if (this.pos + 8 > this.data.length) {
+        if (this.pos + 8 > this.limit) {
             throw new Error('velojson: unexpected end of buffer')
         }
         const value = this.view.getFloat64(this.pos, true)
@@ -383,7 +439,7 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
         break
 
         case WireType.Object: {
-            const bodyWriter = new ByteWriter()
+            const bodyWriter = acquireWriter()
             const obj = value as Record<string, JSONValue>
             for (const k of Object.keys(obj)) {
                 encodeValue(bodyWriter, k, obj[k], false)
@@ -391,11 +447,12 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
             const body = bodyWriter.toUint8Array()
             writer.writeVarint(body.length)
             writer.writeBytes(body)
+            releaseWriter(bodyWriter)
         break
         }
 
         case WireType.Array: {
-            const bodyWriter = new ByteWriter()
+            const bodyWriter = acquireWriter()
             const arr = value as JSONValue[]
             for (const item of arr) {
                 encodeValue(bodyWriter, null, item, true)
@@ -403,6 +460,7 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
             const body = bodyWriter.toUint8Array()
             writer.writeVarint(body.length)
             writer.writeBytes(body)
+            releaseWriter(bodyWriter)
         break
         }
     }
@@ -420,12 +478,14 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
  * ```
  */
 export function encodeVSON(value: JSONValue): Uint8Array {
-    const writer = new ByteWriter()
+    const writer = acquireWriter()
     encodeValue(writer, null, value, true)
     // .slice() here so the public function returns an exact-length,
     // independently-owned buffer, not a view into a possibly-larger
     // over-allocated backing buffer.
-    return writer.toUint8Array().slice()
+    const result = writer.toUint8Array().slice()
+    releaseWriter(writer)
+    return result
 }
 
 // ---------------------------------------------------------------------------
@@ -469,12 +529,12 @@ function decodeValue(reader: ByteReader): DecodedEntry {
         break
         case WireType.Object: {
             const len = reader.readVarint()
-            const bodyReader = new ByteReader(reader.readBytes(len))
+            const previousLimit = reader.enterSection(len)
             // Create a null prototype object so that the __proto__ key is not restricted
             // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
             const obj: Record<string, JSONValue> = Object.create(null)
-            while (bodyReader.remaining > 0) {
-                const entry = decodeValue(bodyReader)
+            while (reader.remaining > 0) {
+                const entry = decodeValue(reader)
                 if (entry.key === null) {
                     throw new Error('velojson: object entry is missing a required key')
                 }
@@ -483,20 +543,22 @@ function decodeValue(reader: ByteReader): DecodedEntry {
                 // accessor to trigger
                 obj[entry.key] = entry.value
             }
+            reader.exitSection(previousLimit)
             value = obj
         break
         }
         case WireType.Array: {
             const len = reader.readVarint()
-            const bodyReader = new ByteReader(reader.readBytes(len))
+            const previousLimit = reader.enterSection(len)
             const arr: JSONValue[] = []
-            while (bodyReader.remaining > 0) {
-                const entry = decodeValue(bodyReader)
+            while (reader.remaining > 0) {
+                const entry = decodeValue(reader)
                 if (entry.key !== null) {
                     throw new Error('velojson: array entry must not have a key')
                 }
                 arr.push(entry.value)
             }
+            reader.exitSection(previousLimit)
             value = arr
         break
         }
