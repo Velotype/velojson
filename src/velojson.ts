@@ -142,10 +142,17 @@ function getKeyBytes(key: string): Uint8Array {
 
 class ByteWriter {
     private buf: Uint8Array
+    /**
+     * Cached DataView over the current backing buffer.
+     * It only needs to be recreated when the backing
+     * buffer itself is replaced (on grow), not on every write.
+     */
+    private bufView: DataView
     private len = 0
 
     constructor(initialCapacity = 64) {
         this.buf = new Uint8Array(initialCapacity)
+        this.bufView = new DataView(this.buf.buffer)
     }
 
     private ensureCapacity(extra: number): void {
@@ -160,6 +167,7 @@ class ByteWriter {
         const newBuf = new Uint8Array(newCap)
         newBuf.set(this.buf.subarray(0, this.len))
         this.buf = newBuf
+        this.bufView = new DataView(this.buf.buffer)
     }
 
     writeByte(b: number): void {
@@ -220,8 +228,7 @@ class ByteWriter {
 
     writeDouble(value: number): void {
         this.ensureCapacity(8)
-        const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.len, 8)
-        view.setFloat64(0, value, true /* little-endian */)
+        this.bufView.setFloat64(this.len, value, true)
         this.len += 8
     }
 
@@ -248,8 +255,10 @@ class ByteWriter {
 class ByteReader {
     private pos = 0
     private data: Uint8Array
+    private view: DataView
     constructor(data: Uint8Array) {
         this.data = data
+        this.view = new DataView(data.buffer, data.byteOffset, data.byteLength)
     }
 
     get remaining(): number {
@@ -296,9 +305,12 @@ class ByteReader {
     }
 
     readDouble(): number {
-        const bytes = this.readBytes(8)
-        const view = new DataView(bytes.buffer, bytes.byteOffset, 8)
-        return view.getFloat64(0, true /* little-endian */)
+        if (this.pos + 8 > this.data.length) {
+            throw new Error('velojson: unexpected end of buffer')
+        }
+        const value = this.view.getFloat64(this.pos, true)
+        this.pos += 8
+        return value
     }
 
     readString(): string {
