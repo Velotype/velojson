@@ -94,7 +94,7 @@ describe('test vson encoding and decoding', () => {
     }
 
     // Primitives
-    itWrap(undefined as any, 'undefined', null)
+    itWrap(undefined as any, 'undefined')
     itWrap(null, 'null')
     itWrap(true, 'true')
     itWrap(false, 'false')
@@ -151,6 +151,119 @@ describe('test vson encoding and decoding', () => {
 
     itBinaryWrap({ a: 1 }, "Simple object encoding", [ 6, 3, 11, 97, 1 ])
     itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding', [6, 13, 11, 97, 1, 13, 98, 3, 116, 119, 111, 10, 99, 8, 100])
-    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding', [7, 7, 3, 1, 0, 3, 2, 3, 3])
+    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding', [7, 14, 3, 1, 0, 3, 2, 3, 3])
 
+    // Larger structural test
+    const bigTricky = {
+        users: Array.from({ length: 50 }, (_, i) => ({
+            id: i,
+            name: `user_${i}`,
+            active: i % 2 === 0,
+            score: i * 1.5,
+            score_history: Array.from({ length: 1000 }, (_, index) => index + 1.223791),
+            tags: i % 3 === 0 ? ['vip', 'early'] : [],
+        })),
+    }
+    it({
+        name: "Faster than JSON.parse(JSON.stringify(obj)) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const iterations = 1000
+                const startJSON = performance.now()
+                let totalLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = JSON.parse(JSON.stringify(bigTricky))
+                    totalLen += obj.users.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
+
+                const startVSON = performance.now()
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = decodeVSON(encodeVSON(bigTricky))
+                    totalLen += obj.users.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: failed to be faster than JSON.parse(JSON.stringify()) VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
+                } else {
+                    console.log(`OK  (${timeVSON - timeJSON} faster than JSON.parse(JSON.stringify()) after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
+    it({
+        name: "Faster than JSON.stringify(obj) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const iterations = 2000
+                const startJSON = performance.now()
+                let totalJLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const str = JSON.stringify(bigTricky)
+                    totalJLen += str.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
+
+                const startVSON = performance.now()
+                let totalVLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const str = encodeVSON(bigTricky)
+                    totalVLen += str.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: ${"JSON.stringify(obj)".padEnd(28)} failed to be faster than JSON.stringify() VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen}`)
+                } else {
+                    console.log(`OK  ${"JSON.stringify(obj)".padEnd(28)} (${timeVSON - timeJSON} faster than JSON.stringify() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen})`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
+    it({
+        name: "Faster than JSON.parse(obj) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const iterations = 2000
+                const startJSON = performance.now()
+                const strObj = JSON.stringify(bigTricky)
+                let totalLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = JSON.parse(strObj)
+                    totalLen += obj.users.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
+
+                const startVSON = performance.now()
+                const binObj = encodeVSON(bigTricky)
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = decodeVSON(binObj) as any
+                    totalLen += obj.users.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: ${"JSON.parse(obj)".padEnd(28)} failed to be faster than JSON.parse() VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
+                } else {
+                    console.log(`OK  ${"JSON.parse(obj)".padEnd(28)} (${timeVSON - timeJSON} faster than JSON.parse() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
 })
