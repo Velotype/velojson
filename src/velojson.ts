@@ -23,7 +23,7 @@ export type JSONValue =
     | JSONValue[]
     | { [key: string]: JSONValue }
 
-enum WireType {
+export enum WireType {
     /** `null` */
     Null = 0,
     /** `false` */
@@ -252,11 +252,7 @@ class ByteWriter {
     }
 }
 
-// encodeValue creates a fresh scratch ByteWriter for every nested object and
-// array to build its length-prefixed body before copying it into the parent
-// Bounded so pathologically deep nesting can't retain unbounded scratch
-// buffers; beyond the cap we just fall back to allocating each time
-const WRITER_POOL_LIMIT = 64
+const WRITER_POOL_LIMIT = 1024
 const writerPool: ByteWriter[] = []
 
 function acquireWriter(): ByteWriter {
@@ -404,7 +400,151 @@ function getWireType(value: JSONValue): WireType {
     if (typeof value === 'object') {
         return WireType.Object
     }
-    throw new Error(`velojson: unsupported value type: ${typeof value}`);
+    throw new Error(`velojson: unsupported value type: ${typeof value}`)
+}
+
+const NUMERIC_FAST_PATH_MIN_LENGTH = 8
+
+function isAllNumbers(arr: JSONValue[]): boolean {
+    for (let i = 0; i < arr.length; i++) {
+        if (typeof arr[i] !== 'number') {
+            return false
+        }
+    }
+    return true
+}
+
+function writeNumericArrayFast(writer: ByteWriter, arr: JSONValue[]): void {
+    for (let i = 0; i < arr.length; i++) {
+        const value = arr[i] as number
+        if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
+            writer.writeByte(WireType.PosInt) // keyLength=0, so header === wireType exactly
+            writer.writeVarint(value)
+        } else {
+            writer.writeByte(WireType.Double)
+            writer.writeDouble(value)
+        }
+    }
+}
+
+function classifyNumericArray(arr: JSONValue[]): { allNumeric: boolean; uniformType: WireType | null } {
+    let allPosInt = true
+    let allDouble = true
+    for (let i = 0; i < arr.length; i++) {
+        const item = arr[i]
+        if (typeof item !== 'number') {
+            return { allNumeric: false, uniformType: null }
+        }
+        if (allPosInt || allDouble) {
+            if (Number.isInteger(item) && item >= 0 && Number.isSafeInteger(item)) {
+                allDouble = false
+            } else {
+                allPosInt = false
+            }
+        }
+    }
+    const uniformType = allPosInt ? WireType.PosInt : (allDouble ? WireType.Double : null)
+    return { allNumeric: true, uniformType }
+}
+
+function classifyGeneralArray(arr: JSONValue[]): WireType | null {
+    let firstType: WireType | null = null
+    for (let i = 0; i < arr.length; i++) {
+        const item = arr[i]
+        const t = getWireType(item === undefined ? null : item)
+        if (t === WireType.Null || t === WireType.False || t === WireType.True) {
+            return null
+        }
+        if (firstType === null) {
+            firstType = t
+        } else if (t !== firstType) {
+            return null
+        }
+    }
+    return firstType
+}
+
+function classifyArrayHomogeneity(arr: JSONValue[]): { wireType: WireType | null; allNumeric: boolean } {
+    if (arr.length === 0) {
+        return { wireType: null, allNumeric: false }
+    }
+    const { allNumeric, uniformType } = classifyNumericArray(arr)
+    if (allNumeric) {
+        return { wireType: uniformType, allNumeric: true }
+    }
+    return { wireType: classifyGeneralArray(arr), allNumeric: false }
+}
+
+/** Writes just the payload for `value` of the given `wireType` — no
+ *  header, no key. Shared by the generic per-value path (which writes the
+ *  header first, then calls this) and the homogeneous-array fast path
+ *  (which writes the shared wireType once for the whole array instead). */
+function encodeValuePayload(writer: ByteWriter, value: JSONValue, wireType: WireType): void {
+    switch (wireType) {
+        case WireType.Null:
+        case WireType.False:
+        case WireType.True:
+        break // no payload
+
+        case WireType.PosInt:
+            writer.writeVarint(value as number)
+        break
+
+        case WireType.Double:
+            writer.writeDouble(value as number)
+        break
+
+        case WireType.String:
+            writer.writeString(value as string)
+        break
+
+        case WireType.Object: {
+            const bodyWriter = acquireWriter()
+            const obj = value as Record<string, JSONValue>
+            for (const k of Object.keys(obj)) {
+                encodeValue(bodyWriter, k, obj[k], false)
+            }
+            const body = bodyWriter.toUint8Array()
+            writer.writeVarint(body.length)
+            writer.writeBytes(body)
+            releaseWriter(bodyWriter)
+        break
+        }
+
+        case WireType.Array:
+            encodeArrayValue(writer, value as JSONValue[])
+        break
+    }
+}
+
+const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
+
+function encodeArrayValue(writer: ByteWriter, arr: JSONValue[]): void {
+    const bodyWriter = acquireWriter()
+
+    let homogeneousType: WireType | null = null
+    if (arr.length >= HOMOGENEOUS_DETECTION_MIN_LENGTH) {
+        homogeneousType = classifyArrayHomogeneity(arr).wireType
+    }
+
+    if (homogeneousType !== null) {
+        bodyWriter.writeByte(homogeneousType)
+        for (let i = 0; i < arr.length; i++) {
+            const item = arr[i]
+            encodeValuePayload(bodyWriter, item === undefined ? null : item, homogeneousType)
+        }
+    } else if (arr.length >= NUMERIC_FAST_PATH_MIN_LENGTH && isAllNumbers(arr)) {
+        writeNumericArrayFast(bodyWriter, arr)
+    } else {
+        for (const item of arr) {
+            encodeValue(bodyWriter, null, item, true)
+        }
+    }
+
+    const body = bodyWriter.toUint8Array()
+    writer.writeVarint((body.length * 2) + (homogeneousType !== null ? 1 : 0))
+    writer.writeBytes(body)
+    releaseWriter(bodyWriter)
 }
 
 function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean): void {
@@ -451,18 +591,9 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
         break
         }
 
-        case WireType.Array: {
-            const bodyWriter = acquireWriter()
-            const arr = value as JSONValue[]
-            for (const item of arr) {
-                encodeValue(bodyWriter, null, item, true)
-            }
-            const body = bodyWriter.toUint8Array()
-            writer.writeVarint(body.length)
-            writer.writeBytes(body)
-            releaseWriter(bodyWriter)
+        case WireType.Array:
+            encodeArrayValue(writer, value as JSONValue[])
         break
-        }
     }
 }
 
@@ -478,6 +609,9 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
  * ```
  */
 export function encodeVSON(value: JSONValue): Uint8Array {
+    if (value === undefined) {
+        return new Uint8Array()
+    }
     const writer = acquireWriter()
     encodeValue(writer, null, value, true)
     // .slice() here so the public function returns an exact-length,
@@ -497,75 +631,103 @@ interface DecodedEntry {
     value: JSONValue
 }
 
+function decodeObjectValue(reader: ByteReader): Record<string, JSONValue> {
+    const len = reader.readVarint()
+    const previousLimit = reader.enterSection(len)
+    // Create a null prototype object so that the __proto__ key is not restricted
+    // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
+    const obj: Record<string, JSONValue> = Object.create(null)
+    while (reader.remaining > 0) {
+        const entry = decodeValue(reader)
+        if (entry.key === null) {
+            throw new Error('velojson: object entry is missing a required key')
+        }
+        // Plain assignment is safe here because obj has no prototype at
+        // all, so there's no inherited __proto__ accessor to trigger
+        obj[entry.key] = entry.value
+    }
+    reader.exitSection(previousLimit)
+    return obj
+}
+
+function decodeArrayValue(reader: ByteReader): JSONValue[] {
+    const lengthAndFlag = reader.readVarint()
+    let len: number
+    let isHomogeneous: boolean
+    if (lengthAndFlag < UINT32_LIMIT) {
+        isHomogeneous = (lengthAndFlag & 1) === 1
+        len = lengthAndFlag >>> 1
+    } else {
+        isHomogeneous = (lengthAndFlag % 2) === 1
+        len = Math.floor(lengthAndFlag / 2)
+    }
+
+    const previousLimit = reader.enterSection(len)
+    const arr: JSONValue[] = []
+
+    if (isHomogeneous) {
+        const sharedType = reader.readByte()
+        if (sharedType === WireType.Null || sharedType === WireType.False || sharedType === WireType.True) {
+            throw new Error('velojson: homogeneous array cannot use a zero-payload wire type')
+        }
+        while (reader.remaining > 0) {
+            arr.push(decodeValuePayload(reader, sharedType))
+        }
+    } else {
+        while (reader.remaining > 0) {
+            const entry = decodeValue(reader)
+            if (entry.key !== null) {
+                throw new Error('velojson: array entry must not have a key')
+            }
+            arr.push(entry.value)
+        }
+    }
+
+    reader.exitSection(previousLimit)
+    return arr
+}
+
+function decodeValuePayload(reader: ByteReader, wireType: number): JSONValue {
+    switch (wireType) {
+        case WireType.Null:
+            return null
+        case WireType.False:
+            return false
+        case WireType.True:
+            return true
+        case WireType.PosInt:
+            return reader.readVarint()
+        case WireType.Double:
+            return reader.readDouble()
+        case WireType.String:
+            return reader.readString()
+        case WireType.Object:
+            return decodeObjectValue(reader)
+        case WireType.Array:
+            return decodeArrayValue(reader)
+        default:
+            throw new Error(`velojson: unknown wire type ${wireType}`)
+    }
+}
+
 function decodeValue(reader: ByteReader): DecodedEntry {
     const header = reader.readVarint()
-    const wireType = header % 8
-    const keyLength = Math.floor(header / 8)
+    let wireType: number
+    let keyLength: number
+    if (header < UINT32_LIMIT) {
+        wireType = header & 7
+        keyLength = header >>> 3
+    } else {
+        wireType = header % 8
+        keyLength = Math.floor(header / 8)
+    }
 
     let key: string | null = null
     if (keyLength > 0) {
         key = textDecoder.decode(reader.readBytes(keyLength))
     }
 
-    let value: JSONValue
-    switch (wireType) {
-        case WireType.Null:
-            value = null
-        break
-        case WireType.False:
-            value = false
-        break
-        case WireType.True:
-            value = true
-        break
-        case WireType.PosInt:
-            value = reader.readVarint()
-        break
-        case WireType.Double:
-            value = reader.readDouble()
-        break
-        case WireType.String:
-            value = reader.readString()
-        break
-        case WireType.Object: {
-            const len = reader.readVarint()
-            const previousLimit = reader.enterSection(len)
-            // Create a null prototype object so that the __proto__ key is not restricted
-            // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
-            const obj: Record<string, JSONValue> = Object.create(null)
-            while (reader.remaining > 0) {
-                const entry = decodeValue(reader)
-                if (entry.key === null) {
-                    throw new Error('velojson: object entry is missing a required key')
-                }
-                // Plain assignment is safe here because obj has
-                // no prototype at all, so there's no inherited __proto__
-                // accessor to trigger
-                obj[entry.key] = entry.value
-            }
-            reader.exitSection(previousLimit)
-            value = obj
-        break
-        }
-        case WireType.Array: {
-            const len = reader.readVarint()
-            const previousLimit = reader.enterSection(len)
-            const arr: JSONValue[] = []
-            while (reader.remaining > 0) {
-                const entry = decodeValue(reader)
-                if (entry.key !== null) {
-                    throw new Error('velojson: array entry must not have a key')
-                }
-                arr.push(entry.value)
-            }
-            reader.exitSection(previousLimit)
-            value = arr
-        break
-        }
-        default:
-            throw new Error(`velojson: unknown wire type ${wireType}`)
-    }
-
+    const value = decodeValuePayload(reader, wireType)
     return { key, value }
 }
 
@@ -584,7 +746,11 @@ function decodeValue(reader: ByteReader): DecodedEntry {
  * // Expected output: {"name":"Some name","age":20,"address":null}
  * ```
  */
-export function decodeVSON(data: Uint8Array): JSONValue {
+// deno-lint-ignore no-explicit-any
+export function decodeVSON(data: Uint8Array): any {
+    if (data.length == 0) {
+        return undefined
+    }
     const reader = new ByteReader(data)
     const entry = decodeValue(reader)
     return entry.value

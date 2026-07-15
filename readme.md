@@ -96,20 +96,34 @@ VALUE is a series of `VStruct` encoded values with a requirement that all have n
 
 `{A: key length ++ 111}{B?: key}{C: encoded value}`
 
-C - `{LENGTH}{VALUE?}`
+Arrays are split into two sub-cases: heterogenous arrays and homogenous arrays
+
+Note: the encoder may choose to use either encoding for homogenous arrays.
+
+#### Heterogenous array:
+C - `{LENGTH ++ 0}{VALUE?}`
 
 LENGTH is encoded as a pos varint (or zero)
 
 VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length
 
+#### Homogenous array:
+C - `{LENGTH ++ 1}{WIRETYPE}{VALUE}`
 
-## Detailed behavior
+LENGTH is encoded as a pos varint (or zero)
 
-Encoding and decoding works similarly to `JSON.parse(JSON.stringify(value))`
+WIRETYPE is a single byte encoding the wire type of all values in the array
+
+VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
+
+
+## Encoding of `undefined`
+
+Encoding and decoding of `undefined` works similarly to `JSON.parse(JSON.stringify(value))`
 
 This means:
 * For Objects with a key that has a value of `undefined`, that key is not encoded
   * For example an object like `{ a: 1, b: null, c: undefined }` is encoded the same as `{ a: 1, b: null }`
 * For Arrays with a value of `undefined`, that value is mutated to `null`
   * For example an object like `[ 1, null, undefined ]` is encoded the same as `[ 1, null, null ]`
-* If `undefined` is passed directly to `encodeVSON()` then that is encoded as `null`
+* If `undefined` is passed directly to `encodeVSON()` then that is encoded in zero bytes to represent `undefined`
