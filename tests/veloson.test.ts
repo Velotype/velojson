@@ -56,13 +56,13 @@ describe('test vson encoding and decoding', () => {
                         fail(`ERROR: ${name} failed explicit round-trip`)
                     } else {
                         if (encoded.length < jsonUtf8Bytes.length) {
-                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${jsonUtf8Bytes.length - encoded.length} fewer bytes)`)
+                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${jsonUtf8Bytes.length - encoded.length} fewer bytes ${Math.floor(100*(jsonUtf8Bytes.length - encoded.length)/jsonUtf8Bytes.length)}%)`)
                         } else if (encoded.length == jsonUtf8Bytes.length) {
                             console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - same bytes)`)
                         } else if (encoded.length - jsonUtf8Bytes.length == 1) {
-                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${encoded.length - jsonUtf8Bytes.length} MORE byte)`)
+                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${encoded.length - jsonUtf8Bytes.length} MORE byte ${Math.floor(100*(encoded.length - jsonUtf8Bytes.length)/jsonUtf8Bytes.length)}%)`)
                         } else {
-                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${encoded.length - jsonUtf8Bytes.length} MORE bytes)`)
+                            console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${encoded.length - jsonUtf8Bytes.length} MORE bytes ${Math.floor(100*(encoded.length - jsonUtf8Bytes.length)/jsonUtf8Bytes.length)}%)`)
                         }
                     }
                 } catch (e) {
@@ -112,7 +112,7 @@ describe('test vson encoding and decoding', () => {
     // Arrays
     itWrap([], 'empty array')
     itWrap([1, 2, 3], 'flat array')
-    itWrap([1, undefined as any, 2, 3], 'flat array', [1, null as any, 2, 3])
+    itWrap([1, undefined as any, 2, 3], 'flat array with undefined', [1, null as any, 2, 3])
     itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array')
 
     // Objects
@@ -160,15 +160,15 @@ describe('test vson encoding and decoding', () => {
             name: `user_${i}`,
             active: i % 2 === 0,
             score: i * 1.5,
-            score_history: Array.from({ length: 1000 }, (_, index) => index + 1.223791),
+            score_history: Array.from({ length: 10000 }, (_, index) => index * 1.223791432122),
             tags: i % 3 === 0 ? ['vip', 'early'] : [],
         })),
     }
+    const iterations = 50
     it({
         name: "Faster than JSON.parse(JSON.stringify(obj)) for an object with many tricky numbers",
         fn: () => {
             try {
-                const iterations = 1000
                 const startJSON = performance.now()
                 let totalLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
@@ -201,7 +201,6 @@ describe('test vson encoding and decoding', () => {
         name: "Faster than JSON.stringify(obj) for an object with many tricky numbers",
         fn: () => {
             try {
-                const iterations = 2000
                 const startJSON = performance.now()
                 let totalJLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
@@ -235,7 +234,6 @@ describe('test vson encoding and decoding', () => {
         name: "Faster than JSON.parse(obj) for an object with many tricky numbers",
         fn: () => {
             try {
-                const iterations = 2000
                 const startJSON = performance.now()
                 const strObj = JSON.stringify(bigTricky)
                 let totalLen = 0

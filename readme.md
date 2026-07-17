@@ -1,7 +1,7 @@
 # velojson
 Binary JSON encoder / decoder
 
-velojson or VSON is a Binary wire format to encode / decode generic JSON data, any data representable with JSON is representable with VSON and vice-versa.
+Velojson or VSON (aka: Velocity JSON) is a compact binary wire format to encode / decode generic JavaScript-based JSON data, any data representable with JSON in JavaScript is representable with VSON and vice-versa. No additional types or capabilities are added special to the binary format - this is a one-to-one direct mapping.
 
 Example:
 ```ts
@@ -19,6 +19,18 @@ const endObj = decodeVSON(objBinary)
 console.log(JSON.stringify(endObj))
 // Expected output: {"name":"Some name","age":20,"address":null}
 ```
+
+## Performance:
+
+** For timing: **
+Since this library is coded in JavaScript, this runs slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers VSON outperforms, though this is rare).
+
+Unless VSON is engine-native it is expected that it cannot run faster than native provided JSON functions.
+
+** For size: **
+VSON is moderately compressed compared to JSON, consistenty using fewer bytes in nearly all cases though only by 10%-20% for most objects.
+
+This is because VSON directly replicates the structure of JSON and by-design does not attempt various compression techniques which are left to other binary encoding specifications. The advantage of this design is that VSON can be used as a direct drop-in anywhere JSON is used without additional considerations being necessary.
 
 ## Encoding format:
 
@@ -70,7 +82,7 @@ C - a positive integer (or zero) is encoded as a pos varint (1 to 7 bytes)
 
 `{A: key length ++ 100}{B?: key}{C: encoded value}`
 
-C - any number other than zero or a positive integer is encoded as an 8 byte double
+C - any number other than zero or a positive integer is encoded as an 8 byte double in little endian format
 
 ### 5 - string
 
