@@ -42,6 +42,11 @@ export enum WireType {
     Array = 7
 }
 
+export enum EncodingFormat {
+    Base = 0,
+    StringTable = 1
+}
+
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 
@@ -280,6 +285,8 @@ class ByteReader {
     private view: DataView
     /** Read boundary for the current nested section (top-level: data.length) */
     private limit: number
+    private keyArray: string[] = []
+    private encodingFormat: EncodingFormat = EncodingFormat.Base
 
     constructor(data: Uint8Array) {
         this.data = data
@@ -303,6 +310,15 @@ class ByteReader {
         } else {
             throw new Error('velojson: unexpected end of buffer')
         }
+    }
+
+    private readVarintInPlace(): number {
+        const pos = this.pos
+        const limit = this.limit
+        const num = this.readVarint()
+        this.pos = pos
+        this.limit = limit
+        return num
     }
 
     private readVarint(): number {
@@ -454,12 +470,85 @@ class ByteReader {
         return arr
     }
 
-    decodeRootValue(): JSONValue {
-        this.decodeValue()
-        if (this.decodeValueTempKey !== null) {
-            throw new Error('velojson: root value must not have a key')
+    private decodeStringTableArrayValue(): string[] {
+        const len = this.readVarint()
+
+        // enterSection
+        if (this.pos + len > this.limit) {
+            console.log(this.pos, len, this.limit)
+            throw new Error('velojson: unexpected end of buffer')
         }
-        return this.decodeValueTempValue
+        const previousLimit = this.limit
+        this.limit = this.pos + len
+
+        const arr: string[] = []
+        /** The String Table is 1-indexed so inject empty string as a zero-index placeholder */
+        arr.push("")
+        while (this.limit > this.pos) {
+            const len = this.readVarint()
+            arr.push(textDecoder.decode(this.readBytes(len)))
+        }
+
+        // exitSection
+        this.pos = this.limit
+        this.limit = previousLimit
+        return arr
+    }
+
+    decodeRootValue(): JSONValue {
+        const header = this.readVarint()
+        let wireType: number
+        let encodingFormat: number
+        if (header < UINT32_LIMIT) {
+            wireType = header & 7
+            encodingFormat = header >>> 3
+        } else {
+            wireType = header % 8
+            encodingFormat = Math.floor(header / 8)
+        }
+        this.encodingFormat = encodingFormat
+
+        if (encodingFormat === EncodingFormat.Base) {
+            switch (wireType) {
+                case WireType.Null:
+                    return null
+                case WireType.False:
+                    return false
+                case WireType.True:
+                    return true
+                case WireType.PosInt:
+                    return this.readVarint()
+                case WireType.Double:
+                    return this.readDouble()
+                case WireType.String:
+                    return this.readString()
+                case WireType.Object:
+                    return this.decodeObjectValue()
+                case WireType.Array:
+                    return this.decodeArrayValue()
+                default:
+                    throw new Error(`velojson: unknown wire type ${wireType}`)
+            }
+        } else if (encodingFormat == EncodingFormat.StringTable) {
+            if (wireType !== WireType.Object && wireType !== WireType.Array) {
+                throw new Error('velojson: StringTable encoding format only valid for Object and Array root values')
+            }
+            const pos = this.pos
+            const totalValueLen = this.readVarint()
+            if (wireType === WireType.Object) {
+                this.pos += totalValueLen
+                this.keyArray = this.decodeStringTableArrayValue()
+                this.pos = pos
+                return this.decodeObjectValue()
+            } else {
+                this.pos += Math.floor(totalValueLen / 2)
+                this.keyArray = this.decodeStringTableArrayValue()
+                this.pos = pos
+                return this.decodeArrayValue()
+            }
+        } else {
+            throw new Error('velojson: unrecognized encoding format')
+        }
     }
 
     /** Used to avoid additional object allocation when returning two vars from decodeValue */
@@ -469,56 +558,59 @@ class ByteReader {
     private decodeValue() {
         const header = this.readVarint()
         let wireType: number
-        let keyLength: number
+        let keyData: number
         if (header < UINT32_LIMIT) {
             wireType = header & 7
-            keyLength = header >>> 3
+            keyData = header >>> 3
         } else {
             wireType = header % 8
-            keyLength = Math.floor(header / 8)
+            keyData = Math.floor(header / 8)
         }
 
         let key: string | null = null
-        if (keyLength > 0) {
-            key = textDecoder.decode(this.readBytes(keyLength))
+        if (keyData > 0) {
+            if (this.encodingFormat === EncodingFormat.Base) {
+                key = textDecoder.decode(this.readBytes(keyData))
+            } else if (this.encodingFormat === EncodingFormat.StringTable) {
+                if (keyData <= this.keyArray.length) {
+                    key = this.keyArray[keyData]
+                } else {
+                    throw new Error('velojson: key index out of bounds')
+                }
+            } else {
+                throw new Error('velojson: encoding format not recognized')
+            }
         }
 
         switch (wireType) {
             case WireType.Null:
                 this.decodeValueTempValue = null
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.False:
                 this.decodeValueTempValue = false
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.True:
                 this.decodeValueTempValue = true
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.PosInt:
                 this.decodeValueTempValue = this.readVarint()
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.Double:
                 this.decodeValueTempValue = this.readDouble()
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.String:
                 this.decodeValueTempValue = this.readString()
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.Object:
                 this.decodeValueTempValue = this.decodeObjectValue()
-                this.decodeValueTempKey = key
-                return
+            break
             case WireType.Array:
                 this.decodeValueTempValue = this.decodeArrayValue()
-                this.decodeValueTempKey = key
-                return
+            break
             default:
                 throw new Error(`velojson: unknown wire type ${wireType}`)
         }
+        this.decodeValueTempKey = key
     }
 }
 
@@ -527,6 +619,13 @@ class ByteReader {
 // ---------------------------------------------------------------------------
 
 function getWireType(value: JSONValue): WireType {
+    const typeof_value = typeof value
+    if (typeof_value === 'number') {
+        if (Number.isInteger(value) && value as number >= 0 && Number.isSafeInteger(value)) {
+            return WireType.PosInt
+        }
+        return WireType.Double // negatives, non-integers, NaN, Infinity, etc.
+    }
     if (value === null) {
         return WireType.Null
     }
@@ -536,33 +635,16 @@ function getWireType(value: JSONValue): WireType {
     if (value === true) {
         return WireType.True
     }
-    if (typeof value === 'number') {
-        if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
-            return WireType.PosInt
-        }
-        return WireType.Double // negatives, non-integers, NaN, Infinity, etc.
-    }
-    if (typeof value === 'string') {
+    if (typeof_value === 'string') {
         return WireType.String
     }
     if (Array.isArray(value)) {
         return WireType.Array
     }
-    if (typeof value === 'object') {
+    if (typeof_value === 'object') {
         return WireType.Object
     }
     throw new Error(`velojson: unsupported value type: ${typeof value}`)
-}
-
-const NUMERIC_FAST_PATH_MIN_LENGTH = 8
-
-function isAllNumbers(arr: JSONValue[]): boolean {
-    for (let i = 0; i < arr.length; i++) {
-        if (typeof arr[i] !== 'number') {
-            return false
-        }
-    }
-    return true
 }
 
 function writeNumericArrayFast(writer: ByteWriter, arr: JSONValue[]): void {
@@ -576,54 +658,6 @@ function writeNumericArrayFast(writer: ByteWriter, arr: JSONValue[]): void {
             writer.writeDouble(value)
         }
     }
-}
-
-function classifyNumericArray(arr: JSONValue[]): { allNumeric: boolean; uniformType: WireType | null } {
-    let allPosInt = true
-    let allDouble = true
-    for (let i = 0; i < arr.length; i++) {
-        const item = arr[i]
-        if (typeof item !== 'number') {
-            return { allNumeric: false, uniformType: null }
-        }
-        if (allPosInt || allDouble) {
-            if (Number.isInteger(item) && item >= 0 && Number.isSafeInteger(item)) {
-                allDouble = false
-            } else {
-                allPosInt = false
-            }
-        }
-    }
-    const uniformType = allPosInt ? WireType.PosInt : (allDouble ? WireType.Double : null)
-    return { allNumeric: true, uniformType }
-}
-
-function classifyGeneralArray(arr: JSONValue[]): WireType | null {
-    let firstType: WireType | null = null
-    for (let i = 0; i < arr.length; i++) {
-        const item = arr[i]
-        const t = getWireType(item === undefined ? null : item)
-        if (t === WireType.Null || t === WireType.False || t === WireType.True) {
-            return null
-        }
-        if (firstType === null) {
-            firstType = t
-        } else if (t !== firstType) {
-            return null
-        }
-    }
-    return firstType
-}
-
-function classifyArrayHomogeneity(arr: JSONValue[]): { wireType: WireType | null; allNumeric: boolean } {
-    if (arr.length === 0) {
-        return { wireType: null, allNumeric: false }
-    }
-    const { allNumeric, uniformType } = classifyNumericArray(arr)
-    if (allNumeric) {
-        return { wireType: uniformType, allNumeric: true }
-    }
-    return { wireType: classifyGeneralArray(arr), allNumeric: false }
 }
 
 /** Writes just the payload for `value` of the given `wireType` — no
@@ -669,22 +703,56 @@ function encodeValuePayload(writer: ByteWriter, value: JSONValue, wireType: Wire
 }
 
 const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
+/*
+function isAllNumbers(arr: JSONValue[]): boolean {
+    for (let i = 0; i < arr.length; i++) {
+        if (typeof arr[i] !== 'number') {
+            return false
+        }
+    }
+    return true
+}*/
 
 function encodeArrayValue(writer: ByteWriter, arr: JSONValue[]): void {
     const bodyWriter = acquireWriter()
 
+    let isAllNumbers = false
     let homogeneousType: WireType | null = null
     if (arr.length >= HOMOGENEOUS_DETECTION_MIN_LENGTH) {
-        homogeneousType = classifyArrayHomogeneity(arr).wireType
+        let firstType: WireType | null = null
+        for (let i = 0; i < arr.length; i++) {
+            const item = arr[i]
+            const item_wire_type = getWireType(item === undefined ? null : item)
+            if (item_wire_type === WireType.Null || item_wire_type === WireType.False || item_wire_type === WireType.True) {
+                homogeneousType = null
+                break
+            }
+            if (firstType === null) {
+                firstType = item_wire_type
+                homogeneousType = item_wire_type
+                if (item_wire_type === WireType.PosInt || item_wire_type === WireType.Double) {
+                    isAllNumbers = true
+                }
+            } else if (item_wire_type !== firstType) {
+                homogeneousType = null
+                if (!isAllNumbers) {
+                    break
+                } else {
+                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                        isAllNumbers = false
+                        break
+                    }
+                }
+            }
+        }
     }
 
     if (homogeneousType !== null) {
         bodyWriter.writeByte(homogeneousType)
         for (let i = 0; i < arr.length; i++) {
-            const item = arr[i]
-            encodeValuePayload(bodyWriter, item === undefined ? null : item, homogeneousType)
+            encodeValuePayload(bodyWriter, arr[i], homogeneousType)
         }
-    } else if (arr.length >= NUMERIC_FAST_PATH_MIN_LENGTH && isAllNumbers(arr)) {
+    } else if (isAllNumbers) {
         writeNumericArrayFast(bodyWriter, arr)
     } else {
         for (const item of arr) {
@@ -702,13 +770,23 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
     if (value === undefined && isInArray === false) {
         return
     }
-    const keyBytes = key !== null ? getKeyBytes(key) : null
-    const keyLength = keyBytes ? keyBytes.length : 0
     const wireType = getWireType((value === undefined && isInArray === true) ? null : value)
-
-    writer.writeVarint((keyLength * 8) + wireType)
-    if (keyBytes) {
+    if (key === null) {
+        writer.writeVarint(wireType)
+     } else if (writerEncodingFormat === EncodingFormat.Base) {
+        const keyBytes = getKeyBytes(key)
+        const keyLength = keyBytes.length
+        writer.writeVarint((keyLength * 8) + wireType)
         writer.writeBytes(keyBytes)
+    } else {
+        const keyIndex = writerStringTableMap.get(key)
+        if (keyIndex !== undefined) {
+            writer.writeVarint((keyIndex * 8) + wireType)
+        } else {
+            writerStringTableArray.push(key)
+            writerStringTableMap.set(key, writerStringTableArray.length)
+            writer.writeVarint((writerStringTableArray.length * 8) + wireType)
+        }
     }
 
     switch (wireType) {
@@ -748,10 +826,33 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
     }
 }
 
+function encodeStringTableValue(writer: ByteWriter, arr: string[]): void {
+    const bodyWriter = acquireWriter()
+
+    for (let i = 0; i < arr.length; i++) {
+        const item = arr[i]
+        if (item === undefined || item === null) {
+            throw new Error('velojson: string table cannot have undefined or null values')
+        }
+        encodeValuePayload(bodyWriter, item, WireType.String)
+    }
+
+    const body = bodyWriter.toUint8Array()
+    writer.writeVarint(body.length)
+    writer.writeBytes(body)
+    releaseWriter(bodyWriter)
+}
+
+let writerEncodingFormat: EncodingFormat = EncodingFormat.Base
+let writerStringTableMap: Map<string, number> = new Map<string, number>()
+let writerStringTableArray: string[] = []
+
 /**
  * Encode any JSON-representable value into a VSON binary buffer.
  *
  * Note: Will throw on encoding errors
+ *
+ * @param [EncodingFormat] encodingFormat - defaults to StringTable if the value is an object or array
  *
  * Example:
  * ```ts
@@ -759,12 +860,54 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
  * const objBinary: Uint8Array = encodeVSON(obj)
  * ```
  */
-export function encodeVSON(value: JSONValue): Uint8Array {
+// deno-lint-ignore no-explicit-any
+function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array {
     if (value === undefined) {
         return new Uint8Array()
     }
+
+    // Set writerEncodingFormat
+    if (encodingFormat === undefined) {
+        if (value !== null && (typeof value === "object" || Array.isArray(value))) {
+            writerEncodingFormat = EncodingFormat.StringTable
+        } else {
+            writerEncodingFormat = EncodingFormat.Base
+        }
+    } else {
+        writerEncodingFormat = encodingFormat
+    }
+
     const writer = acquireWriter()
-    encodeValue(writer, null, value, true)
+    if (writerEncodingFormat === EncodingFormat.Base) {
+        encodeValue(writer, null, value, false)
+    } else if (writerEncodingFormat === EncodingFormat.StringTable) {
+        const wireType = getWireType(value)
+        writer.writeVarint((writerEncodingFormat * 8) + wireType)
+        writerStringTableMap = new Map<string, number>()
+        writerStringTableArray = []
+        switch (wireType) {
+            case WireType.Object: {
+                const bodyWriter = acquireWriter()
+                const obj = value as Record<string, JSONValue>
+                for (const k of Object.keys(obj)) {
+                    encodeValue(bodyWriter, k, obj[k], false)
+                }
+                const body = bodyWriter.toUint8Array()
+                writer.writeVarint(body.length)
+                writer.writeBytes(body)
+                releaseWriter(bodyWriter)
+            break
+            }
+            case WireType.Array:
+                encodeArrayValue(writer, value as JSONValue[])
+            break
+            default:
+                throw new Error('velojson: String table encoding format only supported for root Object or Array types')
+        }
+        encodeStringTableValue(writer, writerStringTableArray)
+    } else {
+        throw new Error('velojson: encoding format not recognized')
+    }
     // .slice() here so the public function returns an exact-length,
     // independently-owned buffer, not a view into a possibly-larger
     // over-allocated backing buffer.
@@ -776,11 +919,6 @@ export function encodeVSON(value: JSONValue): Uint8Array {
 // ---------------------------------------------------------------------------
 // Decoding
 // ---------------------------------------------------------------------------
-
-interface DecodedEntry {
-    key: string | null
-    value: JSONValue
-}
 
 /**
  * Decode a VSON binary buffer back into a JSON-representable value.
@@ -798,10 +936,15 @@ interface DecodedEntry {
  * ```
  */
 // deno-lint-ignore no-explicit-any
-export function decodeVSON(data: Uint8Array): any {
+function decodeVSON(data: Uint8Array): any {
     if (data.length == 0) {
         return undefined
     }
     const reader = new ByteReader(data)
     return reader.decodeRootValue()
+}
+
+export const VSON = {
+    encode: encodeVSON,
+    decode: decodeVSON
 }
