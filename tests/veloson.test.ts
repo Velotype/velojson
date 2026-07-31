@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { encodeVSON, decodeVSON, type JSONValue } from '../src/velojson.ts'
+import { VSON, type JSONValue, EncodingFormat } from '../src/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { fail } from "@std/assert"
 
@@ -35,7 +35,7 @@ function deepEqual(a: unknown, b: unknown, strict: boolean): boolean {
 
 describe('test vson encoding and decoding', () => {
 
-    const itWrap = (value: JSONValue, name: string, expectedRoundTripValue?: any) => {
+    const itWrap = (value: JSONValue, name: string, expectedRoundTripValue?: any, encodingFormat?: EncodingFormat) => {
         it({name,
             fn: () => {
                 try {
@@ -44,15 +44,17 @@ describe('test vson encoding and decoding', () => {
                     const encoder = new TextEncoder()
                     const jsonUtf8Bytes: Uint8Array = encoder.encode(jsonString)
 
-                    const encoded = encodeVSON(value)
-                    const decoded = decodeVSON(encoded)
+                    const encoded = VSON.encode(value, encodingFormat)
+                    const decoded = VSON.decode(encoded)
                     if (expectedRoundTripValue === undefined && !deepEqual(decoded, value, false)) {
                         console.error('Expected:', jsonString, value)
-                        console.error('Actual:  ', JSON.stringify(decoded), decoded)
+                        console.error('Encoded:', encoded)
+                        console.error('Actual decoded:  ', JSON.stringify(decoded), decoded)
                         fail(`ERROR: ${name} failed round-trip`)
                     } else if (expectedRoundTripValue !== undefined && !deepEqual(decoded, expectedRoundTripValue, true)) {
                         console.error('Expected:', JSON.stringify(expectedRoundTripValue), expectedRoundTripValue)
-                        console.error('Actual:  ', JSON.stringify(decoded), decoded)
+                        console.error('Encoded:', encoded)
+                        console.error('Actual decoded:  ', JSON.stringify(decoded), decoded)
                         fail(`ERROR: ${name} failed explicit round-trip`)
                     } else {
                         if (encoded.length < jsonUtf8Bytes.length) {
@@ -72,11 +74,11 @@ describe('test vson encoding and decoding', () => {
             }
         })
     }
-    const itBinaryWrap = (value: JSONValue, name: string, expectedBinaryValue: number[]) => {
+    const itBinaryWrap = (value: JSONValue, name: string, expectedBinaryValue: number[], encodingFormat: EncodingFormat) => {
         it({name,
             fn: () => {
                 try {
-                    const encoded = encodeVSON(value)
+                    const encoded = VSON.encode(value, encodingFormat)
                     const encodedArray = Array.from(encoded)
                     if (!deepEqual(encodedArray, expectedBinaryValue, true)) {
                         console.error('Expected:', expectedBinaryValue)
@@ -110,14 +112,20 @@ describe('test vson encoding and decoding', () => {
     itWrap('héllo 🌍 世界', 'unicode string')
 
     // Arrays
-    itWrap([], 'empty array')
-    itWrap([1, 2, 3], 'flat array')
-    itWrap([1, undefined as any, 2, 3], 'flat array with undefined', [1, null as any, 2, 3])
-    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array')
+    itWrap([], 'empty array - Base', [], EncodingFormat.Base)
+    itWrap([], 'empty array - StringTable', [], EncodingFormat.StringTable)
+    itWrap([1, 2, 3], 'flat array - Base', [1, 2, 3], EncodingFormat.Base)
+    itWrap([1, 2, 3], 'flat array - StringTable', [1, 2, 3], EncodingFormat.StringTable)
+    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - Base', [1, null as any, 2, 3], EncodingFormat.Base)
+    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - StringTable', [1, null as any, 2, 3], EncodingFormat.StringTable)
+    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - Base', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.Base)
+    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - StringTable', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.StringTable)
 
     // Objects
-    itWrap({}, 'empty object')
-    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object')
+    itWrap({}, 'empty object - Base', {}, EncodingFormat.Base)
+    itWrap({}, 'empty object - StringTable', {}, EncodingFormat.StringTable)
+    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - Base', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.Base)
+    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - StringTable', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.StringTable)
     const protoObject = Object.create(null)
     protoObject.a = 1
     protoObject.b = 'two'
@@ -126,16 +134,15 @@ describe('test vson encoding and decoding', () => {
     protoObject.prototype = "test prototype"
     protoObject.constructor = "test constructor"
     protoObject.d = null
-    itWrap(protoObject, 'flat object with restricted keys')
-    itWrap(
-        {
-            name: 'velojson',
-            version: 1,
-            tags: ['binary', 'json', 'wire-format'],
-            meta: { author: 'test', stable: false, ratio: -0.5 },
-        },
-        'nested object'
-    )
+    itWrap(protoObject, 'flat object with restricted keys - Base', protoObject, EncodingFormat.Base)
+    itWrap(protoObject, 'flat object with restricted keys - StringTable', protoObject, EncodingFormat.StringTable)
+    const nestedObject = {
+        name: 'velojson',
+        version: 1,
+        tags: ['binary', 'json', 'wire-format'],
+        meta: { author: 'test', stable: false, ratio: -0.5 },
+    }
+    itWrap(nestedObject, 'nested object - StringTable', nestedObject, EncodingFormat.StringTable)
 
     // Larger structural test
     const big = {
@@ -147,11 +154,15 @@ describe('test vson encoding and decoding', () => {
             tags: i % 3 === 0 ? ['vip', 'early'] : [],
         })),
     }
-    itWrap(big, 'larger structure (50 users)')
+    itWrap(big, 'larger structure (50 users) - Base', big, EncodingFormat.Base)
+    itWrap(big, 'larger structure (50 users) - StringTable', big, EncodingFormat.StringTable)
 
-    itBinaryWrap({ a: 1 }, "Simple object encoding", [ 6, 3, 11, 97, 1 ])
-    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding', [6, 13, 11, 97, 1, 13, 98, 3, 116, 119, 111, 10, 99, 8, 100])
-    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding', [7, 14, 3, 1, 0, 3, 2, 3, 3])
+    itBinaryWrap({ a: 1 }, "Simple object encoding - Base", [6, 3, 11, 97, 1], EncodingFormat.Base)
+    itBinaryWrap({ a: 1 }, "Simple object encoding - StringTable", [14, 2, 11, 1, 2, 1, 97], EncodingFormat.StringTable)
+    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - Base', [6, 13, 11, 97, 1, 13, 98, 3, 116, 119, 111, 10, 99, 8, 100], EncodingFormat.Base)
+    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - StringTable', [14, 9, 11, 1, 21, 3, 116, 119, 111, 26, 32, 8, 1, 97, 1, 98, 1, 99, 1, 100], EncodingFormat.StringTable)
+    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - Base', [7, 14, 3, 1, 0, 3, 2, 3, 3], EncodingFormat.Base)
+    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - StringTable', [15, 14, 3, 1, 0, 3, 2, 3, 3, 0], EncodingFormat.StringTable)
 
     // Larger structural test
     const bigTricky = {
@@ -180,7 +191,7 @@ describe('test vson encoding and decoding', () => {
 
                 const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
-                    const obj = decodeVSON(encodeVSON(bigTricky))
+                    const obj = VSON.decode(VSON.encode(bigTricky, EncodingFormat.StringTable))
                     totalLen += obj.users.length
                 }
                 const endVSON = performance.now()
@@ -189,7 +200,7 @@ describe('test vson encoding and decoding', () => {
                 if (timeVSON > timeJSON) {
                     fail(`ERROR: failed to be faster than JSON.parse(JSON.stringify()) VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
                 } else {
-                    console.log(`OK  (${timeVSON - timeJSON} faster than JSON.parse(JSON.stringify()) after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                    console.log(`OK  (${Math.floor(timeVSON - timeJSON)} faster than JSON.parse(JSON.stringify()) after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
                 }
             } catch (e) {
                 console.log("Exception", e)
@@ -213,7 +224,7 @@ describe('test vson encoding and decoding', () => {
                 const startVSON = performance.now()
                 let totalVLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
-                    const str = encodeVSON(bigTricky)
+                    const str = VSON.encode(bigTricky, EncodingFormat.StringTable)
                     totalVLen += str.length
                 }
                 const endVSON = performance.now()
@@ -222,7 +233,7 @@ describe('test vson encoding and decoding', () => {
                 if (timeVSON > timeJSON) {
                     fail(`ERROR: ${"JSON.stringify(obj)".padEnd(28)} failed to be faster than JSON.stringify() VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen}`)
                 } else {
-                    console.log(`OK  ${"JSON.stringify(obj)".padEnd(28)} (${timeVSON - timeJSON} faster than JSON.stringify() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen})`)
+                    console.log(`OK  ${"JSON.stringify(obj)".padEnd(28)} (${Math.floor(timeVSON - timeJSON)} faster than JSON.stringify() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen})`)
                 }
             } catch (e) {
                 console.log("Exception", e)
@@ -245,9 +256,9 @@ describe('test vson encoding and decoding', () => {
                 const timeJSON = endJSON - startJSON
 
                 const startVSON = performance.now()
-                const binObj = encodeVSON(bigTricky)
+                const binObj = VSON.encode(bigTricky, EncodingFormat.StringTable)
                 for (let i: number = 1; i <= iterations; i++) {
-                    const obj = decodeVSON(binObj) as any
+                    const obj = VSON.decode(binObj) as any
                     totalLen += obj.users.length
                 }
                 const endVSON = performance.now()
@@ -256,7 +267,7 @@ describe('test vson encoding and decoding', () => {
                 if (timeVSON > timeJSON) {
                     fail(`ERROR: ${"JSON.parse(obj)".padEnd(28)} failed to be faster than JSON.parse() VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
                 } else {
-                    console.log(`OK  ${"JSON.parse(obj)".padEnd(28)} (${timeVSON - timeJSON} faster than JSON.parse() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                    console.log(`OK  ${"JSON.parse(obj)".padEnd(28)} (${Math.floor(timeVSON - timeJSON)} faster than JSON.parse() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
                 }
             } catch (e) {
                 console.log("Exception", e)
@@ -264,4 +275,5 @@ describe('test vson encoding and decoding', () => {
             }
         }
     })
+
 })

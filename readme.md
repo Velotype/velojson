@@ -5,16 +5,16 @@ Velojson or VSON (aka: Velocity JSON) is a compact binary wire format to encode 
 
 Example:
 ```ts
-import { encodeVSON, decodeVSON } from 'jsr:@velotype/velojson'
+import { VSON } from 'jsr:@velotype/velojson'
 
 const startObj = { name: "Some name", age: 20, address: null }
 
-const objBinary: Uint8Array = encodeVSON(startObj)
+const objBinary: Uint8Array = VSON.encode(startObj)
 
 console.log(objBinary)
-// Expected output: Uint8Array(30) [ 6, 28, 37, 110, 97, 109, 101, 9, 83, 111, 109, 101, 32, 110, 97, 109, 101, 27, 97, 103, 101, 20, 56, 97, 100, 100, 114, 101, 115, 115 ]
+// Expected output: Uint8Array(34) [ 14, 14, 13, 9, 83, 111, 109, 101, 32, 110, 97, 109, 101, 19, 20, 24, 17, 4, 110, 97, 109, 101, 3,  97, 103, 101, 7, 97, 100, 100, 114, 101, 115, 115 ]
 
-const endObj = decodeVSON(objBinary)
+const endObj = VSON.decode(objBinary)
 
 console.log(JSON.stringify(endObj))
 // Expected output: {"name":"Some name","age":20,"address":null}
@@ -22,17 +22,24 @@ console.log(JSON.stringify(endObj))
 
 ## Performance:
 
-** For timing: **
+### For timing:
 Since this library is coded in JavaScript, this runs slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers VSON outperforms, though this is rare).
 
 Unless VSON is engine-native it is expected that it cannot run faster than native provided JSON functions.
 
-** For size: **
-VSON is moderately compressed compared to JSON, consistenty using fewer bytes in nearly all cases though only by 10%-20% for most objects.
+### For size:
+VSON supports two encoding formats:
 
-This is because VSON directly replicates the structure of JSON and by-design does not attempt various compression techniques which are left to other binary encoding specifications. The advantage of this design is that VSON can be used as a direct drop-in anywhere JSON is used without additional considerations being necessary.
+#### Base format:
+VSON Base format is moderately compressed compared to JSON, consistenty using fewer bytes in nearly all cases though only by 10%-20% for most objects. This is because the VSON Base format directly replicates the structure of JSON. The advantage of this design is that VSON Base can be used in situations envolving streaming and partial decoding.
 
-## Encoding format:
+#### String Table format:
+VSON String Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once and depending on the shape of the JSON object can generate high compression rates, with 50% - 80% reasonable depending on how many keys are duplicated in the data.
+
+
+## Base Encoding format:
+
+VRoot - `{A: encoding format (0) ++ wire type}{C?: encoded value}`
 
 VStruct - `{A: key length ++ wire type}{B?: key}{C?: encoded value}`
 
@@ -129,7 +136,113 @@ WIRETYPE is a single byte encoding the wire type of all values in the array
 VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
 
 
-## Encoding of `undefined`
+## String Table Encoding format:
+
+VRoot - `{A: encoding format (1) ++ wire type}{C: encoded value}{D: encoded string table}`
+
+VStringTable - `{L: encoding length}{C: encoded values}`
+
+A - a pos varint constructed by encoding the bits of the encoding format and appending 3 bits representing the wire type of the root value (must be either Object or Array)
+
+C - the encoded value of the root value
+
+D - a homogenous string array of all keys, note this encoding skips the homogenous bit and the wire type varint since both defined for the string table
+
+VStruct - `{A: key index ++ wire type}{C?: encoded value}`
+
+A - a pos varint constructed by encoding the bits of the key index and appending 3 bits representing the wire type, note that the key index is 1-indexed and a key index of zero represents no key
+
+C - the encoded value of the wire type (encoding depends on the wire type)
+
+Native wire types:
+* 0 - null
+* 1 - boolean false
+* 2 - boolean true
+* 3 - number (positive integer)
+* 4 - number (double)
+* 5 - string
+* 6 - object
+* 7 - array
+
+
+## Per-value encoding
+
+### 0 - null
+
+`{A: key index ++ 000}`
+
+Note - there is no "encoded value" since the wire type is sufficient
+
+### 1 - boolean false
+
+`{A: key index ++ 001}`
+
+Note - there is no "encoded value" since the wire type is sufficient
+
+### 2 - boolean true
+
+`{A: key index ++ 010}`
+
+Note - there is no "encoded value" since the wire type is sufficient
+
+### 3 - number (positive integer)
+
+`{A: key index ++ 011}{C: encoded value}`
+
+C - a positive integer (or zero) is encoded as a pos varint (1 to 7 bytes)
+
+### 4 - number (double)
+
+`{A: key index ++ 100}{C: encoded value}`
+
+C - any number other than zero or a positive integer is encoded as an 8 byte double in little endian format
+
+### 5 - string
+
+`{A: key index ++ 101}{C: encoded value}`
+
+C - `{LENGTH}{VALUE?}`
+
+LENGTH is encoded as a pos varint (or zero)
+
+VALUE is a UTF-8 encoded string
+
+### 6 - object
+
+`{A: key index ++ 110}{C: encoded value}`
+
+C - `{LENGTH}{VALUE?}`
+
+LENGTH is encoded as a pos varint (or zero)
+
+VALUE is a series of `VStruct` encoded values with a requirement that all have non-zero key length
+
+### 7 - array
+
+`{A: key index ++ 111}{C: encoded value}`
+
+Arrays are split into two sub-cases: heterogenous arrays and homogenous arrays
+
+Note: the encoder may choose to use either encoding for homogenous arrays.
+
+#### Heterogenous array:
+C - `{LENGTH ++ 0}{VALUE?}`
+
+LENGTH is encoded as a pos varint (or zero)
+
+VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length
+
+#### Homogenous array:
+C - `{LENGTH ++ 1}{WIRETYPE}{VALUE}`
+
+LENGTH is encoded as a pos varint (or zero)
+
+WIRETYPE is a single byte encoding the wire type of all values in the array
+
+VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
+
+
+## Note on the encoding of `undefined`
 
 Encoding and decoding of `undefined` works similarly to `JSON.parse(JSON.stringify(value))`
 
