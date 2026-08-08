@@ -626,8 +626,17 @@ function getWireType(value: JSONValue): WireType {
         }
         return WireType.Double // negatives, non-integers, NaN, Infinity, etc.
     }
+    if (typeof_value === 'string') {
+        return WireType.String
+    }
+    if (Array.isArray(value)) {
+        return WireType.Array
+    }
     if (value === null) {
         return WireType.Null
+    }
+    if (typeof_value === 'object') {
+        return WireType.Object
     }
     if (value === false) {
         return WireType.False
@@ -635,110 +644,40 @@ function getWireType(value: JSONValue): WireType {
     if (value === true) {
         return WireType.True
     }
-    if (typeof_value === 'string') {
-        return WireType.String
-    }
-    if (Array.isArray(value)) {
-        return WireType.Array
-    }
-    if (typeof_value === 'object') {
-        return WireType.Object
-    }
     throw new Error(`velojson: unsupported value type: ${typeof value}`)
 }
 
-function writeNumericArrayFast(writer: ByteWriter, arr: JSONValue[]): void {
-    for (let i = 0; i < arr.length; i++) {
-        const value = arr[i] as number
-        if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
-            writer.writeByte(WireType.PosInt) // keyLength=0, so header === wireType exactly
-            writer.writeVarint(value)
-        } else {
-            writer.writeByte(WireType.Double)
-            writer.writeDouble(value)
-        }
-    }
-}
-
-/** Writes just the payload for `value` of the given `wireType` — no
- *  header, no key. Shared by the generic per-value path (which writes the
- *  header first, then calls this) and the homogeneous-array fast path
- *  (which writes the shared wireType once for the whole array instead). */
-function encodeValuePayload(writer: ByteWriter, value: JSONValue, wireType: WireType): void {
-    switch (wireType) {
-        case WireType.Null:
-        case WireType.False:
-        case WireType.True:
-        break // no payload
-
-        case WireType.PosInt:
-            writer.writeVarint(value as number)
-        break
-
-        case WireType.Double:
-            writer.writeDouble(value as number)
-        break
-
-        case WireType.String:
-            writer.writeString(value as string)
-        break
-
-        case WireType.Object: {
-            const bodyWriter = acquireWriter()
-            const obj = value as Record<string, JSONValue>
-            for (const k of Object.keys(obj)) {
-                encodeValue(bodyWriter, k, obj[k], false)
-            }
-            const body = bodyWriter.toUint8Array()
-            writer.writeVarint(body.length)
-            writer.writeBytes(body)
-            releaseWriter(bodyWriter)
-        break
-        }
-
-        case WireType.Array:
-            encodeArrayValue(writer, value as JSONValue[])
-        break
-    }
-}
-
 const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
-/*
-function isAllNumbers(arr: JSONValue[]): boolean {
-    for (let i = 0; i < arr.length; i++) {
-        if (typeof arr[i] !== 'number') {
-            return false
-        }
-    }
-    return true
-}*/
 
-function encodeArrayValue(writer: ByteWriter, arr: JSONValue[]): void {
-    const bodyWriter = acquireWriter()
+function encodeArrayValue_base_format(writer: ByteWriter, arr: JSONValue[]): void {
 
     let isAllNumbers = false
     let homogeneousType: WireType | null = null
     if (arr.length >= HOMOGENEOUS_DETECTION_MIN_LENGTH) {
-        let firstType: WireType | null = null
-        for (let i = 0; i < arr.length; i++) {
-            const item = arr[i]
-            const item_wire_type = getWireType(item === undefined ? null : item)
-            if (item_wire_type === WireType.Null || item_wire_type === WireType.False || item_wire_type === WireType.True) {
-                homogeneousType = null
-                break
+        let i = 0
+        const first_item = arr[i]
+        const firstType: WireType | null = getWireType(first_item === undefined ? null : first_item)
+        if (firstType === WireType.Null || firstType === WireType.False || firstType === WireType.True) {
+            homogeneousType = null
+            isAllNumbers = false
+        } else {
+            homogeneousType = firstType
+            if (firstType === WireType.PosInt || firstType === WireType.Double) {
+                isAllNumbers = true
             }
-            if (firstType === null) {
-                firstType = item_wire_type
-                homogeneousType = item_wire_type
-                if (item_wire_type === WireType.PosInt || item_wire_type === WireType.Double) {
-                    isAllNumbers = true
-                }
-            } else if (item_wire_type !== firstType) {
-                homogeneousType = null
-                if (!isAllNumbers) {
+            i += 1
+            for (; i < arr.length; i++) {
+                const item = arr[i]
+                const item_wire_type = getWireType(item === undefined ? null : item)
+                if (item_wire_type === WireType.Null || item_wire_type === WireType.False || item_wire_type === WireType.True) {
+                    homogeneousType = null
+                    isAllNumbers = false
                     break
-                } else {
-                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                } else if (item_wire_type !== firstType) {
+                    homogeneousType = null
+                    if (!isAllNumbers) {
+                        break
+                    } else if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
                         isAllNumbers = false
                         break
                     }
@@ -747,16 +686,63 @@ function encodeArrayValue(writer: ByteWriter, arr: JSONValue[]): void {
         }
     }
 
+    const bodyWriter = acquireWriter()
     if (homogeneousType !== null) {
         bodyWriter.writeByte(homogeneousType)
-        for (let i = 0; i < arr.length; i++) {
-            encodeValuePayload(bodyWriter, arr[i], homogeneousType)
+        switch (homogeneousType) {
+            case WireType.PosInt:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeVarint(arr[i] as number)
+                }
+            break
+
+            case WireType.Double:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeDouble(arr[i] as number)
+                }
+            break
+
+            case WireType.String:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeString(arr[i] as string)
+                }
+            break
+
+            case WireType.Object: {
+                for (let i = 0; i < arr.length; i++) {
+                    const subBodyWriter = acquireWriter()
+                    const obj = arr[i] as Record<string, JSONValue>
+                    for (const k of Object.keys(obj)) {
+                        encodeValue_base_format(subBodyWriter, k, obj[k], false)
+                    }
+                    const body = subBodyWriter.toUint8Array()
+                    bodyWriter.writeVarint(body.length)
+                    bodyWriter.writeBytes(body)
+                    releaseWriter(subBodyWriter)
+                }
+            break
+            }
+
+            case WireType.Array:
+                for (let i = 0; i < arr.length; i++) {
+                    encodeArrayValue_base_format(bodyWriter, arr[i] as JSONValue[])
+                }
+            break
         }
     } else if (isAllNumbers) {
-        writeNumericArrayFast(bodyWriter, arr)
+        for (let i = 0; i < arr.length; i++) {
+            const value = arr[i] as number
+            if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
+                bodyWriter.writeByte(WireType.PosInt)
+                bodyWriter.writeVarint(value)
+            } else {
+                bodyWriter.writeByte(WireType.Double)
+                bodyWriter.writeDouble(value)
+            }
+        }
     } else {
         for (const item of arr) {
-            encodeValue(bodyWriter, null, item, true)
+            encodeValue_base_format(bodyWriter, null, item, true)
         }
     }
 
@@ -766,17 +752,119 @@ function encodeArrayValue(writer: ByteWriter, arr: JSONValue[]): void {
     releaseWriter(bodyWriter)
 }
 
-function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean): void {
+function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JSONValue[]): void {
+
+    let isAllNumbers = false
+    let homogeneousType: WireType | null = null
+    if (arr.length >= HOMOGENEOUS_DETECTION_MIN_LENGTH) {
+        let i = 0
+        const first_item = arr[i]
+        const firstType: WireType | null = getWireType(first_item === undefined ? null : first_item)
+        if (firstType === WireType.Null || firstType === WireType.False || firstType === WireType.True) {
+            homogeneousType = null
+            isAllNumbers = false
+        } else {
+            homogeneousType = firstType
+            if (firstType === WireType.PosInt || firstType === WireType.Double) {
+                isAllNumbers = true
+            }
+            i += 1
+            for (; i < arr.length; i++) {
+                const item = arr[i]
+                const item_wire_type = getWireType(item === undefined ? null : item)
+                if (item_wire_type === WireType.Null || item_wire_type === WireType.False || item_wire_type === WireType.True) {
+                    homogeneousType = null
+                    isAllNumbers = false
+                    break
+                } else if (item_wire_type !== firstType) {
+                    homogeneousType = null
+                    if (!isAllNumbers) {
+                        break
+                    } else if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                        isAllNumbers = false
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    const bodyWriter = acquireWriter()
+    if (homogeneousType !== null) {
+        bodyWriter.writeByte(homogeneousType)
+        switch (homogeneousType) {
+            case WireType.PosInt:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeVarint(arr[i] as number)
+                }
+            break
+
+            case WireType.Double:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeDouble(arr[i] as number)
+                }
+            break
+
+            case WireType.String:
+                for (let i = 0; i < arr.length; i++) {
+                    bodyWriter.writeString(arr[i] as string)
+                }
+            break
+
+            case WireType.Object: {
+                for (let i = 0; i < arr.length; i++) {
+                    const subBodyWriter = acquireWriter()
+                    const obj = arr[i] as Record<string, JSONValue>
+                    for (const k of Object.keys(obj)) {
+                        encodeValue_string_table_format(subBodyWriter, k, obj[k], false)
+                    }
+                    const body = subBodyWriter.toUint8Array()
+                    bodyWriter.writeVarint(body.length)
+                    bodyWriter.writeBytes(body)
+                    releaseWriter(subBodyWriter)
+                }
+            break
+            }
+
+            case WireType.Array:
+                for (let i = 0; i < arr.length; i++) {
+                    encodeArrayValue_string_table_format(bodyWriter, arr[i] as JSONValue[])
+                }
+            break
+        }
+    } else if (isAllNumbers) {
+        for (let i = 0; i < arr.length; i++) {
+            const value = arr[i] as number
+            if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
+                bodyWriter.writeByte(WireType.PosInt)
+                bodyWriter.writeVarint(value)
+            } else {
+                bodyWriter.writeByte(WireType.Double)
+                bodyWriter.writeDouble(value)
+            }
+        }
+    } else {
+        for (const item of arr) {
+            encodeValue_string_table_format(bodyWriter, null, item, true)
+        }
+    }
+
+    const body = bodyWriter.toUint8Array()
+    writer.writeVarint((body.length * 2) + (homogeneousType !== null ? 1 : 0))
+    writer.writeBytes(body)
+    releaseWriter(bodyWriter)
+}
+
+function encodeValue_base_format(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean): void {
     if (value === undefined && isInArray === false) {
         return
     }
     const wireType = getWireType((value === undefined && isInArray === true) ? null : value)
     if (key === null) {
         writer.writeVarint(wireType)
-     } else if (writerEncodingFormat === EncodingFormat.Base) {
+    } else if (writerEncodingFormat === EncodingFormat.Base) {
         const keyBytes = getKeyBytes(key)
-        const keyLength = keyBytes.length
-        writer.writeVarint((keyLength * 8) + wireType)
+        writer.writeVarint((keyBytes.length * 8) + wireType)
         writer.writeBytes(keyBytes)
     } else {
         const keyIndex = writerStringTableMap.get(key)
@@ -811,7 +899,7 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
             const bodyWriter = acquireWriter()
             const obj = value as Record<string, JSONValue>
             for (const k of Object.keys(obj)) {
-                encodeValue(bodyWriter, k, obj[k], false)
+                encodeValue_base_format(bodyWriter, k, obj[k], false)
             }
             const body = bodyWriter.toUint8Array()
             writer.writeVarint(body.length)
@@ -821,7 +909,62 @@ function encodeValue(writer: ByteWriter, key: string | null, value: JSONValue, i
         }
 
         case WireType.Array:
-            encodeArrayValue(writer, value as JSONValue[])
+            encodeArrayValue_base_format(writer, value as JSONValue[])
+        break
+    }
+}
+
+function encodeValue_string_table_format(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean): void {
+    if (value === undefined && isInArray === false) {
+        return
+    }
+    const wireType = getWireType((value === undefined && isInArray === true) ? null : value)
+    if (key === null) {
+        writer.writeVarint(wireType)
+    } else {
+        const keyIndex = writerStringTableMap.get(key)
+        if (keyIndex !== undefined) {
+            writer.writeVarint((keyIndex * 8) + wireType)
+        } else {
+            writerStringTableArray.push(key)
+            writerStringTableMap.set(key, writerStringTableArray.length)
+            writer.writeVarint((writerStringTableArray.length * 8) + wireType)
+        }
+    }
+
+    switch (wireType) {
+        case WireType.Null:
+        case WireType.False:
+        case WireType.True:
+        break // no payload
+
+        case WireType.PosInt:
+            writer.writeVarint(value as number)
+        break
+
+        case WireType.Double:
+            writer.writeDouble(value as number)
+        break
+
+        case WireType.String:
+            writer.writeString(value as string)
+        break
+
+        case WireType.Object: {
+            const bodyWriter = acquireWriter()
+            const obj = value as Record<string, JSONValue>
+            for (const k of Object.keys(obj)) {
+                encodeValue_string_table_format(bodyWriter, k, obj[k], false)
+            }
+            const body = bodyWriter.toUint8Array()
+            writer.writeVarint(body.length)
+            writer.writeBytes(body)
+            releaseWriter(bodyWriter)
+        break
+        }
+
+        case WireType.Array:
+            encodeArrayValue_string_table_format(writer, value as JSONValue[])
         break
     }
 }
@@ -834,7 +977,7 @@ function encodeStringTableValue(writer: ByteWriter, arr: string[]): void {
         if (item === undefined || item === null) {
             throw new Error('velojson: string table cannot have undefined or null values')
         }
-        encodeValuePayload(bodyWriter, item, WireType.String)
+        bodyWriter.writeString(item)
     }
 
     const body = bodyWriter.toUint8Array()
@@ -879,7 +1022,7 @@ function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array {
 
     const writer = acquireWriter()
     if (writerEncodingFormat === EncodingFormat.Base) {
-        encodeValue(writer, null, value, false)
+        encodeValue_base_format(writer, null, value, false)
     } else if (writerEncodingFormat === EncodingFormat.StringTable) {
         const wireType = getWireType(value)
         writer.writeVarint((writerEncodingFormat * 8) + wireType)
@@ -890,7 +1033,7 @@ function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array {
                 const bodyWriter = acquireWriter()
                 const obj = value as Record<string, JSONValue>
                 for (const k of Object.keys(obj)) {
-                    encodeValue(bodyWriter, k, obj[k], false)
+                    encodeValue_string_table_format(bodyWriter, k, obj[k], false)
                 }
                 const body = bodyWriter.toUint8Array()
                 writer.writeVarint(body.length)
@@ -899,7 +1042,7 @@ function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array {
             break
             }
             case WireType.Array:
-                encodeArrayValue(writer, value as JSONValue[])
+                encodeArrayValue_string_table_format(writer, value as JSONValue[])
             break
             default:
                 throw new Error('velojson: String table encoding format only supported for root Object or Array types')
