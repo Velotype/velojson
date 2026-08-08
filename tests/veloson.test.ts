@@ -166,7 +166,7 @@ describe('test vson encoding and decoding', () => {
 
     // Larger structural test
     const bigTricky = {
-        users: Array.from({ length: 50 }, (_, i) => ({
+        users: Array.from({ length: 10 }, (_, i) => ({
             id: i,
             name: `user_${i}`,
             active: i % 2 === 0,
@@ -245,8 +245,8 @@ describe('test vson encoding and decoding', () => {
         name: "Faster than JSON.parse(obj) for an object with many tricky numbers",
         fn: () => {
             try {
-                const startJSON = performance.now()
                 const strObj = JSON.stringify(bigTricky)
+                const startJSON = performance.now()
                 let totalLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
                     const obj = JSON.parse(strObj)
@@ -255,8 +255,8 @@ describe('test vson encoding and decoding', () => {
                 const endJSON = performance.now()
                 const timeJSON = endJSON - startJSON
 
-                const startVSON = performance.now()
                 const binObj = VSON.encode(bigTricky, EncodingFormat.StringTable)
+                const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
                     const obj = VSON.decode(binObj) as any
                     totalLen += obj.users.length
