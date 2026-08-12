@@ -50,7 +50,7 @@ export class ByteReader {
             multiplier *= 128
             bytesRead++
             if (bytesRead > 10) {
-                throw new Error('velojson: varint too long (corrupt data?)')
+                throw new Error('velojson: varint too long (corrupt data)')
             }
         } while (byte & 0x80)
         return result
@@ -74,7 +74,7 @@ export class ByteReader {
         const len = this.readVarint()
         // enterSection
         if (this.pos + len > this.limit) {
-            throw new Error('velojson: unexpected end of buffer')
+            throw new Error(`velojson: unexpected end of buffer ${this.pos} ${len} ${this.limit}`)
         }
         const previousLimit = this.limit
         this.limit = this.pos + len
@@ -83,13 +83,7 @@ export class ByteReader {
         // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
         const obj: Record<string, JSONValue> = Object.create(null)
         while (this.limit > this.pos) {
-            this.decodeValue()
-            if (this.decodeValueTempKey === null) {
-                throw new Error('velojson: object entry is missing a required key')
-            }
-            // Plain assignment is safe here because obj has no prototype at
-            // all, so there's no inherited __proto__ accessor to trigger
-            obj[this.decodeValueTempKey] = this.decodeValueTempValue
+            this.decodeObjectFieldValue(obj)
         }
         // exitSection
         this.pos = this.limit
@@ -111,7 +105,7 @@ export class ByteReader {
 
         // enterSection
         if (this.pos + len > this.limit) {
-            throw new Error('velojson: unexpected end of buffer')
+            throw new Error(`velojson: unexpected end of buffer ${this.pos} ${len} ${this.limit}`)
         }
         const previousLimit = this.limit
         this.limit = this.pos + len
@@ -168,11 +162,7 @@ export class ByteReader {
         } else {
             arr = []
             while (this.limit > this.pos) {
-                this.decodeValue()
-                if (this.decodeValueTempKey !== null) {
-                    throw new Error('velojson: array entry must not have a key')
-                }
-                arr.push(this.decodeValueTempValue)
+                arr.push(this.decodeArrayEntryValue())
             }
         }
 
@@ -241,7 +231,7 @@ export class ByteReader {
                 default:
                     throw new Error(`velojson: unknown wire type ${wireType}`)
             }
-        } else if (encodingFormat == EncodingFormat.StringTable) {
+        } else if (encodingFormat === EncodingFormat.KeyTable) {
             if (wireType !== WireType.Object && wireType !== WireType.Array) {
                 throw new Error('velojson: StringTable encoding format only valid for Object and Array root values')
             }
@@ -258,16 +248,17 @@ export class ByteReader {
                 this.pos = pos
                 return this.decodeArrayValue()
             }
+        } else if (encodingFormat === EncodingFormat.KeyID) {
+            if (wireType !== WireType.Object) {
+                throw new Error('velojson: KeyIDs encoding format only valid for Object root values')
+            }
+            return this.decodeObjectValue()
         } else {
             throw new Error('velojson: unrecognized encoding format')
         }
     }
 
-    /** Used to avoid additional object allocation when returning two vars from decodeValue */
-    private decodeValueTempKey: string | null = null
-    /** Used to avoid additional object allocation when returning two vars from decodeValue */
-    private decodeValueTempValue: JSONValue = null
-    private decodeValue() {
+    private decodeObjectFieldValue(obj: Record<string, JSONValue>) {
         const header = this.readVarint()
         let wireType: number
         let keyData: number
@@ -283,45 +274,87 @@ export class ByteReader {
         if (keyData > 0) {
             if (this.encodingFormat === EncodingFormat.Base) {
                 key = textDecoder.decode(this.readBytes(keyData))
-            } else if (this.encodingFormat === EncodingFormat.StringTable) {
+            } else if (this.encodingFormat === EncodingFormat.KeyTable) {
                 if (keyData <= this.keyArray.length) {
                     key = this.keyArray[keyData]
                 } else {
                     throw new Error('velojson: key index out of bounds')
                 }
+            } else if (this.encodingFormat === EncodingFormat.KeyID) {
+                key = String(keyData)
             } else {
                 throw new Error('velojson: encoding format not recognized')
             }
+        } else {
+            throw new Error('velojson: object field is missing a required key')
         }
 
+        // Plain assignment is safe here because obj has no prototype at
+        // all, so there's no inherited __proto__ accessor to trigger
         switch (wireType) {
             case WireType.Null:
-                this.decodeValueTempValue = null
+                obj[key] = null
             break
             case WireType.False:
-                this.decodeValueTempValue = false
+                obj[key] = false
             break
             case WireType.True:
-                this.decodeValueTempValue = true
+                obj[key] = true
             break
             case WireType.PosInt:
-                this.decodeValueTempValue = this.readVarint()
+                obj[key] = this.readVarint()
             break
             case WireType.Double:
-                this.decodeValueTempValue = this.readDouble()
+                obj[key] = this.readDouble()
             break
             case WireType.String:
-                this.decodeValueTempValue = this.readString()
+                obj[key] = this.readString()
             break
             case WireType.Object:
-                this.decodeValueTempValue = this.decodeObjectValue()
+                obj[key] = this.decodeObjectValue()
             break
             case WireType.Array:
-                this.decodeValueTempValue = this.decodeArrayValue()
+                obj[key] = this.decodeArrayValue()
             break
             default:
                 throw new Error(`velojson: unknown wire type ${wireType}`)
         }
-        this.decodeValueTempKey = key
+    }
+    private decodeArrayEntryValue(): JSONValue {
+        const header = this.readVarint()
+        let wireType: number
+        let keyData: number
+        if (header < UINT32_LIMIT) {
+            wireType = header & 7
+            keyData = header >>> 3
+        } else {
+            wireType = header % 8
+            keyData = Math.floor(header / 8)
+        }
+
+        if (keyData > 0) {
+            throw new Error('velojson: array entry must not have a key')
+        }
+
+        switch (wireType) {
+            case WireType.Null:
+                return null
+            case WireType.False:
+                return false
+            case WireType.True:
+                return true
+            case WireType.PosInt:
+                return this.readVarint()
+            case WireType.Double:
+                return this.readDouble()
+            case WireType.String:
+                return this.readString()
+            case WireType.Object:
+                return this.decodeObjectValue()
+            case WireType.Array:
+                return this.decodeArrayValue()
+            default:
+                throw new Error(`velojson: unknown wire type ${wireType}`)
+        }
     }
 }

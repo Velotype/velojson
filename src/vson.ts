@@ -2,8 +2,8 @@
 import { ByteReader } from "./byte_reader.ts"
 import { acquireWriter, releaseWriter } from "./byte_writer.ts"
 import { EncodingFormat, getWireType, WireType, type JSONValue } from "./common.ts"
-import { encodeValue_base_format } from "./encode_base.ts";
-import { encodeArrayValue_string_table_format, encodeStringTableValue, encodeValue_string_table_format } from "./encode_stringtable.ts";
+import { encodeValue_base_format } from "./encode_base.ts"
+import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key_table_format } from "./encode_keytable.ts"
 
 /**
  * Encode any JSON-representable value into a VSON binary buffer.
@@ -28,7 +28,7 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
     let writerEncodingFormat: EncodingFormat
     if (encodingFormat === undefined) {
         if (value !== null && (typeof value === "object" || Array.isArray(value))) {
-            writerEncodingFormat = EncodingFormat.StringTable
+            writerEncodingFormat = EncodingFormat.KeyTable
         } else {
             writerEncodingFormat = EncodingFormat.Base
         }
@@ -39,7 +39,7 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
     const writer = acquireWriter()
     if (writerEncodingFormat === EncodingFormat.Base) {
         encodeValue_base_format(writer, null, value, false)
-    } else if (writerEncodingFormat === EncodingFormat.StringTable) {
+    } else if (writerEncodingFormat === EncodingFormat.KeyTable) {
         const wireType = getWireType(value)
         writer.writeVarint((writerEncodingFormat * 8) + wireType)
         const writerStringTableMap: Map<string, number> = new Map<string, number>()
@@ -49,7 +49,7 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
                 const bodyWriter = acquireWriter()
                 const obj = value as Record<string, JSONValue>
                 for (const k of Object.keys(obj)) {
-                    encodeValue_string_table_format(bodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
+                    encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
                 }
                 const body = bodyWriter.toUint8Array()
                 writer.writeVarint(body.length)
@@ -58,12 +58,12 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
             break
             }
             case WireType.Array:
-                encodeArrayValue_string_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
+                encodeArrayValue_key_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
             break
             default:
                 throw new Error('velojson: String table encoding format only supported for root Object or Array types')
         }
-        encodeStringTableValue(writer, writerStringTableArray)
+        encodeKeyTableValue(writer, writerStringTableArray)
     } else {
         throw new Error('velojson: encoding format not recognized')
     }

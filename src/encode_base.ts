@@ -36,6 +36,16 @@ function encodeArrayValue_base_format(writer: ByteWriter, arr: JSONValue[]): voi
                     }
                 }
             }
+            if (homogeneousType == null && isAllNumbers == true) {
+                for (; i < arr.length; i++) {
+                    const item = arr[i]
+                    const item_wire_type = getWireType(item === undefined ? null : item)
+                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                        isAllNumbers = false
+                        break
+                    }
+                }
+            }
         }
     }
 

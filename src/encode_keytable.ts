@@ -1,7 +1,7 @@
 import { type ByteWriter, acquireWriter, releaseWriter } from "./byte_writer.ts"
 import { type JSONValue, WireType, HOMOGENEOUS_DETECTION_MIN_LENGTH, getWireType } from "./common.ts"
 
-export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JSONValue[], writerStringTableArray: string[], writerStringTableMap: Map<string, number>): void {
+export function encodeArrayValue_key_table_format(writer: ByteWriter, arr: JSONValue[], writerKeyTableArray: string[], writerKeyTableMap: Map<string, number>): void {
 
     let isAllNumbers = false
     let homogeneousType: WireType | null = null
@@ -30,6 +30,16 @@ export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JS
                     if (!isAllNumbers) {
                         break
                     } else if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                        isAllNumbers = false
+                        break
+                    }
+                }
+            }
+            if (homogeneousType == null && isAllNumbers == true) {
+                for (; i < arr.length; i++) {
+                    const item = arr[i]
+                    const item_wire_type = getWireType(item === undefined ? null : item)
+                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
                         isAllNumbers = false
                         break
                     }
@@ -65,7 +75,7 @@ export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JS
                     const subBodyWriter = acquireWriter()
                     const obj = arr[i] as Record<string, JSONValue>
                     for (const k of Object.keys(obj)) {
-                        encodeValue_string_table_format(subBodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
+                        encodeValue_key_table_format(subBodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
                     }
                     const body = subBodyWriter.toUint8Array()
                     bodyWriter.writeVarint(body.length)
@@ -77,7 +87,7 @@ export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JS
 
             case WireType.Array:
                 for (let i = 0; i < arr.length; i++) {
-                    encodeArrayValue_string_table_format(bodyWriter, arr[i] as JSONValue[], writerStringTableArray, writerStringTableMap)
+                    encodeArrayValue_key_table_format(bodyWriter, arr[i] as JSONValue[], writerKeyTableArray, writerKeyTableMap)
                 }
             break
         }
@@ -94,7 +104,7 @@ export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JS
         }
     } else {
         for (const item of arr) {
-            encodeValue_string_table_format(bodyWriter, null, item, true, writerStringTableArray, writerStringTableMap)
+            encodeValue_key_table_format(bodyWriter, null, item, true, writerKeyTableArray, writerKeyTableMap)
         }
     }
 
@@ -104,7 +114,7 @@ export function encodeArrayValue_string_table_format(writer: ByteWriter, arr: JS
     releaseWriter(bodyWriter)
 }
 
-export function encodeValue_string_table_format(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean, writerStringTableArray: string[], writerStringTableMap: Map<string, number>): void {
+export function encodeValue_key_table_format(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean, writerKeyTableArray: string[], writerKeyTableMap: Map<string, number>): void {
     if (value === undefined && isInArray === false) {
         return
     }
@@ -112,13 +122,13 @@ export function encodeValue_string_table_format(writer: ByteWriter, key: string 
     if (key === null) {
         writer.writeVarint(wireType)
     } else {
-        const keyIndex = writerStringTableMap.get(key)
+        const keyIndex = writerKeyTableMap.get(key)
         if (keyIndex !== undefined) {
             writer.writeVarint((keyIndex * 8) + wireType)
         } else {
-            writerStringTableArray.push(key)
-            writerStringTableMap.set(key, writerStringTableArray.length)
-            writer.writeVarint((writerStringTableArray.length * 8) + wireType)
+            writerKeyTableArray.push(key)
+            writerKeyTableMap.set(key, writerKeyTableArray.length)
+            writer.writeVarint((writerKeyTableArray.length * 8) + wireType)
         }
     }
 
@@ -144,7 +154,7 @@ export function encodeValue_string_table_format(writer: ByteWriter, key: string 
             const bodyWriter = acquireWriter()
             const obj = value as Record<string, JSONValue>
             for (const k of Object.keys(obj)) {
-                encodeValue_string_table_format(bodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
+                encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
             }
             const body = bodyWriter.toUint8Array()
             writer.writeVarint(body.length)
@@ -154,12 +164,12 @@ export function encodeValue_string_table_format(writer: ByteWriter, key: string 
         }
 
         case WireType.Array:
-            encodeArrayValue_string_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
+            encodeArrayValue_key_table_format(writer, value as JSONValue[], writerKeyTableArray, writerKeyTableMap)
         break
     }
 }
 
-export function encodeStringTableValue(writer: ByteWriter, arr: string[]): void {
+export function encodeKeyTableValue(writer: ByteWriter, arr: string[]): void {
     const bodyWriter = acquireWriter()
 
     for (let i = 0; i < arr.length; i++) {

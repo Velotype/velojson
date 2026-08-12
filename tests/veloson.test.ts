@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { VSON, type JSONValue, EncodingFormat } from '../src/velojson.ts'
+import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter } from '../src/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { fail } from "@std/assert"
 
@@ -31,6 +31,38 @@ function deepEqual(a: unknown, b: unknown, strict: boolean): boolean {
         return aKeys.every((k) => deepEqual((a as any)[k], (b as any)[k], strict))
     }
     return false
+}
+
+type BigObjType = {
+    users: { // keyid = 1
+        id: number // keyid = 1
+        name: string // keyid = 2
+        active: boolean // keyid = 3
+        score: number // keyid = 4
+        tags: string[] // keyid = 5
+    }[]
+}
+
+function encodeBigObj(inObj: BigObjType): Uint8Array<ArrayBufferLike> {
+    const rootWriter = new VBINRootWriter()
+    const rootObj = rootWriter.startRootObject()
+    const usersArray = new VBINHomogenousObjectArrayWriter()
+    inObj.users.forEach(userObj => {
+        const userVBIN = new VBINObjectWriter()
+        userVBIN.encodePosIntValue(1, userObj.id)
+        userVBIN.encodeStringValue(2, userObj.name)
+        userVBIN.encodeBooleanValue(3, userObj.active)
+        userVBIN.encodeNumberValue(4, userObj.score)
+        const tagsArray = new VBINHomogenousStringArrayWriter()
+        userObj.tags.forEach(tag => {
+            tagsArray.encodeStringValueInHomogenousArray(tag)
+        })
+        userVBIN.finalizeHomogenousStringArray(5, tagsArray)
+        usersArray.finalizeObjectInHomogenousArray(userVBIN)
+    })
+    rootObj.finalizeHomogenousObjectArray(1, usersArray)
+    rootWriter.finalizeRootObject(rootObj)
+    return rootWriter.toUint8ArrayAndRelease()
 }
 
 describe('test vson encoding and decoding', () => {
@@ -81,11 +113,41 @@ describe('test vson encoding and decoding', () => {
                     const encoded = VSON.encode(value, encodingFormat)
                     const encodedArray = Array.from(encoded)
                     if (!deepEqual(encodedArray, expectedBinaryValue, true)) {
-                        console.error('Expected:', expectedBinaryValue)
-                        console.error('Actual:  ', encodedArray)
+                        const jsonValue = JSON.stringify(value)
+                        console.error('Expected:', expectedBinaryValue), expectedBinaryValue.length
+                        console.error('Actual:  ', encodedArray, encodedArray.length)
+                        console.error('JSON: ', jsonValue, jsonValue.length)
                         fail(`ERROR: ${name} failed binary encoding`)
                     } else {
                         console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes)`)
+                    }
+                } catch (e) {
+                    console.log("Exception", e)
+                    fail("ERROR: Thrown exception")
+                }
+            }
+        })
+    }
+    const itBinaryVBINWrap = (value: BigObjType, name: string, expectedRoundTripVSONValue?: any, expectedBinaryValue?: number[]) => {
+        it({name,
+            fn: () => {
+                try {
+                    const jsonCompare = JSON.stringify(value)
+                    const encoded = encodeBigObj(value)
+                    const encodedArray = Array.from(encoded)
+                    const vsonDecode = VSON.decode(encoded)
+                    const vsonCompare = VSON.encode(value)
+                    if (expectedBinaryValue !== undefined && !deepEqual(encodedArray, expectedBinaryValue, true)) {
+                        console.error('Actual:  ', encodedArray)
+                        console.error('VSON:    ', JSON.stringify(vsonDecode))
+                        fail(`ERROR: ${name} failed VBIN binary encoding`)
+                    } else if (expectedRoundTripVSONValue !== undefined && !deepEqual(vsonDecode, expectedRoundTripVSONValue, true)) {
+                        console.error('Expected:', expectedRoundTripVSONValue)
+                        console.error('Actual:  ', vsonDecode)
+                        console.error('VSON:    ', JSON.stringify(vsonDecode))
+                        fail(`ERROR: ${name} failed VBIN->VSON round trip encoding`)
+                    } else {
+                        console.log(`OK  ${name.padEnd(28)} ${encoded.length} VBIN bytes vs ${vsonCompare.length} vson bytes vs ${jsonCompare.length} json bytes (${jsonCompare.length - encoded.length} fewer than json ${encoded.length - vsonCompare.length} vs vson)`)
                     }
                 } catch (e) {
                     console.log("Exception", e)
@@ -113,19 +175,19 @@ describe('test vson encoding and decoding', () => {
 
     // Arrays
     itWrap([], 'empty array - Base', [], EncodingFormat.Base)
-    itWrap([], 'empty array - StringTable', [], EncodingFormat.StringTable)
+    itWrap([], 'empty array - StringTable', [], EncodingFormat.KeyTable)
     itWrap([1, 2, 3], 'flat array - Base', [1, 2, 3], EncodingFormat.Base)
-    itWrap([1, 2, 3], 'flat array - StringTable', [1, 2, 3], EncodingFormat.StringTable)
+    itWrap([1, 2, 3], 'flat array - StringTable', [1, 2, 3], EncodingFormat.KeyTable)
     itWrap([1, undefined as any, 2, 3], 'flat array with undefined - Base', [1, null as any, 2, 3], EncodingFormat.Base)
-    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - StringTable', [1, null as any, 2, 3], EncodingFormat.StringTable)
+    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - StringTable', [1, null as any, 2, 3], EncodingFormat.KeyTable)
     itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - Base', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.Base)
-    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - StringTable', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.StringTable)
+    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - StringTable', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.KeyTable)
 
     // Objects
     itWrap({}, 'empty object - Base', {}, EncodingFormat.Base)
-    itWrap({}, 'empty object - StringTable', {}, EncodingFormat.StringTable)
+    itWrap({}, 'empty object - StringTable', {}, EncodingFormat.KeyTable)
     itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - Base', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.Base)
-    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - StringTable', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.StringTable)
+    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - StringTable', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.KeyTable)
     const protoObject = Object.create(null)
     protoObject.a = 1
     protoObject.b = 'two'
@@ -135,16 +197,24 @@ describe('test vson encoding and decoding', () => {
     protoObject.constructor = "test constructor"
     protoObject.d = null
     itWrap(protoObject, 'flat object with restricted keys - Base', protoObject, EncodingFormat.Base)
-    itWrap(protoObject, 'flat object with restricted keys - StringTable', protoObject, EncodingFormat.StringTable)
+    itWrap(protoObject, 'flat object with restricted keys - StringTable', protoObject, EncodingFormat.KeyTable)
     const nestedObject = {
         name: 'velojson',
         version: 1,
         tags: ['binary', 'json', 'wire-format'],
         meta: { author: 'test', stable: false, ratio: -0.5 },
     }
-    itWrap(nestedObject, 'nested object - StringTable', nestedObject, EncodingFormat.StringTable)
+    itWrap(nestedObject, 'nested object - StringTable', nestedObject, EncodingFormat.KeyTable)
 
-    // Larger structural test
+    const bigShort = {
+        users: Array.from({ length: 2 }, (_, i) => ({
+            id: i,
+            name: `user_${i}`,
+            active: i % 2 === 0,
+            score: i * 1.5,
+            tags: i % 3 === 0 ? ['vip', 'early'] : [],
+        }))
+    }
     const big = {
         users: Array.from({ length: 50 }, (_, i) => ({
             id: i,
@@ -152,17 +222,30 @@ describe('test vson encoding and decoding', () => {
             active: i % 2 === 0,
             score: i * 1.5,
             tags: i % 3 === 0 ? ['vip', 'early'] : [],
-        })),
+        }))
     }
+    const bigVSON = {
+        "1": Array.from({ length: 50 }, (_, i) => ({
+            "1": i,
+            "2": `user_${i}`,
+            "3": i % 2 === 0,
+            "4": i * 1.5,
+            "5": i % 3 === 0 ? ['vip', 'early'] : [],
+        }))
+    }
+    itBinaryVBINWrap(bigShort, "VBIN object encoding - short", {"1":[{"1":0,"2":"user_0","3":true,"4":0,"5":["vip","early"]},{"1":1,"2":"user_1","3":false,"4":1.5,"5":[]}]}, [22, 54, 15, 105, 6, 26, 11, 0, 21, 6, 117, 115, 101, 114, 95, 48, 26, 35, 0, 47, 23, 5, 3, 118, 105, 112, 5, 101, 97, 114, 108, 121, 23, 11, 1, 21, 6, 117, 115, 101, 114, 95, 49, 25, 36, 0, 0, 0, 0, 0, 0, 248, 63, 47, 3, 5])
+    itBinaryVBINWrap(big, "VBIN object encoding - longer", bigVSON)
+
+    // Larger structural test
     itWrap(big, 'larger structure (50 users) - Base', big, EncodingFormat.Base)
-    itWrap(big, 'larger structure (50 users) - StringTable', big, EncodingFormat.StringTable)
+    itWrap(big, 'larger structure (50 users) - StringTable', big, EncodingFormat.KeyTable)
 
     itBinaryWrap({ a: 1 }, "Simple object encoding - Base", [6, 3, 11, 97, 1], EncodingFormat.Base)
-    itBinaryWrap({ a: 1 }, "Simple object encoding - StringTable", [14, 2, 11, 1, 2, 1, 97], EncodingFormat.StringTable)
+    itBinaryWrap({ a: 1 }, "Simple object encoding - StringTable", [14, 2, 11, 1, 2, 1, 97], EncodingFormat.KeyTable)
     itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - Base', [6, 13, 11, 97, 1, 13, 98, 3, 116, 119, 111, 10, 99, 8, 100], EncodingFormat.Base)
-    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - StringTable', [14, 9, 11, 1, 21, 3, 116, 119, 111, 26, 32, 8, 1, 97, 1, 98, 1, 99, 1, 100], EncodingFormat.StringTable)
+    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - StringTable', [14, 9, 11, 1, 21, 3, 116, 119, 111, 26, 32, 8, 1, 97, 1, 98, 1, 99, 1, 100], EncodingFormat.KeyTable)
     itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - Base', [7, 14, 3, 1, 0, 3, 2, 3, 3], EncodingFormat.Base)
-    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - StringTable', [15, 14, 3, 1, 0, 3, 2, 3, 3, 0], EncodingFormat.StringTable)
+    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - StringTable', [15, 14, 3, 1, 0, 3, 2, 3, 3, 0], EncodingFormat.KeyTable)
 
     // Larger structural test
     const bigTricky = {
@@ -191,7 +274,7 @@ describe('test vson encoding and decoding', () => {
 
                 const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
-                    const obj = VSON.decode(VSON.encode(bigTricky, EncodingFormat.StringTable))
+                    const obj = VSON.decode(VSON.encode(bigTricky, EncodingFormat.KeyTable))
                     totalLen += obj.users.length
                 }
                 const endVSON = performance.now()
@@ -224,7 +307,7 @@ describe('test vson encoding and decoding', () => {
                 const startVSON = performance.now()
                 let totalVLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
-                    const str = VSON.encode(bigTricky, EncodingFormat.StringTable)
+                    const str = VSON.encode(bigTricky, EncodingFormat.KeyTable)
                     totalVLen += str.length
                 }
                 const endVSON = performance.now()
@@ -255,7 +338,7 @@ describe('test vson encoding and decoding', () => {
                 const endJSON = performance.now()
                 const timeJSON = endJSON - startJSON
 
-                const binObj = VSON.encode(bigTricky, EncodingFormat.StringTable)
+                const binObj = VSON.encode(bigTricky, EncodingFormat.KeyTable)
                 const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
                     const obj = VSON.decode(binObj) as any
