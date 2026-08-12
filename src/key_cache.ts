@@ -1,3 +1,4 @@
+import { textEncoder } from "./common.ts"
 
 // Real-world JSON is overwhelmingly "arrays of records with a shared shape"
 // (the same field names over and over). Re-running TextEncoder.encode() on
@@ -17,8 +18,6 @@
 // (insertion-order) iteration — measures 3-5x slower than this on the actual
 // hot path in V8, since Map#delete carries more overhead than it looks like
 // it should. The linked list gets the same O(1) reordering without ever
-
-import { textEncoder } from "./common.ts";
 
 // calling Map#delete/Map#set on anything but genuine inserts and evictions.
 const KEY_CACHE_LIMIT = 4096

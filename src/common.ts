@@ -1,5 +1,4 @@
 
-
 /**
  * Type representing encodable values (aka: plain JSON objects)
  */
@@ -41,7 +40,7 @@ export enum WireType {
  * * `Base`
  *   * A direct 1-1 representation of JSON in binary.
  * 
- * * `StringTable`
+ * * `KeyTable`
  *   * A representation of JSON in binary where all object keys are
  *     replaced with KeyIDs into a lookup table at the end of the
  *     encoded object. This means that every key is only encoded
@@ -49,13 +48,24 @@ export enum WireType {
  * 
  * Advanced format (also called `VBIN` format):
  * 
- * * `KeyIDs`
+ * * `KeyID`
  *   * An advanced representation of JSON in binary where all object keys
  *     are represented only by pre-determined KeyIDs. This means that the
  *     key names are not encoded in the payload and must be known a priori
  *     by the decoder.
  * 
  *     Using this format requires advanced usage of the encode/decode paths.
+ * 
+ *     * If a VBIN encoded object is passed to `VSON.decode()` a debug format
+ *       will be used.
+ * 
+ *       The debug format will create a plain JSON object of a VBIN KeyID
+ *       encoded binary. The object will have all key names set from their KeyIDs.
+ *     
+ *       For example:
+ *       `{"message": "hello"}` where the "message" key has KeyID = 1
+ *       will be decoded as:
+ *       `{"1": "hello"}`
  * 
  */
 export enum EncodingFormat {
@@ -67,7 +77,7 @@ export enum EncodingFormat {
      * encoded object. This means that every key is only encoded
      * once.
      */
-    StringTable = 1,
+    KeyTable = 1,
     /**
      * An advanced representation of JSON in binary where all object keys
      * are represented only by pre-determined KeyIDs. This means that the
@@ -76,7 +86,7 @@ export enum EncodingFormat {
      * 
      * Using this format requires advanced usage of the encode/decode paths.
      */
-    KeyIDs = 2
+    KeyID = 2
 }
 
 export function getWireType(value: JSONValue): WireType {
@@ -112,7 +122,7 @@ export function getWireType(value: JSONValue): WireType {
 export const UINT32_LIMIT = 0x100000000
 
 export const textEncoder = new TextEncoder()
-export const textDecoder = new TextDecoder()
+export const textDecoder = new TextDecoder('utf-8', { fatal: true })
 
 /** Threshold for detection of homogenous arrays - arrays above this length will be tested for homogeneity */
 export const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
