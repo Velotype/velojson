@@ -88,6 +88,9 @@ export class ByteReader {
         // exitSection
         this.pos = this.limit
         this.limit = previousLimit
+        if (mapper !== undefined && !mapper.hasAllRequiredFields(obj)) {
+            throw new Error('velojson: missing required field')
+        }
         return obj
     }
 
@@ -145,19 +148,23 @@ export class ByteReader {
                     }
                 break
                 case WireType.Object: {
-                    let fieldMapper: VBINObjectMapper | undefined
                     if (mapper !== undefined) {
                         if (keyData === undefined) {
                             throw new Error("velojson: missing keyID")
                         }
-                        fieldMapper = mapper.fieldMapper(keyData)
+                        const fieldMapper = mapper.fieldMapper(keyData)
                         if (fieldMapper === undefined) {
                             throw new Error(`velojson: unknown field keyID ${keyData}`)
                         }
-                    }
-                    arr = []
-                    while (this.limit > this.pos) {
-                        arr.push(this.decodeObjectValue(fieldMapper))
+                        arr = []
+                        while (this.limit > this.pos) {
+                            arr.push(this.decodeObjectValue(fieldMapper))
+                        }
+                    } else {
+                        arr = []
+                        while (this.limit > this.pos) {
+                            arr.push(this.decodeObjectValue())
+                        }
                     }
                 break
                 }
