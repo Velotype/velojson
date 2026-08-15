@@ -65,16 +65,6 @@ function encodeBigObj(inObj: BigObjType): Uint8Array<ArrayBufferLike> {
     return rootWriter.toUint8ArrayAndRelease()
 }
 
-/*type BigObjType = {
-    users: { // keyid = 1
-        id: number // keyid = 1
-        name: string // keyid = 2
-        active: boolean // keyid = 3
-        score: number // keyid = 4
-        tags: string[] // keyid = 5
-    }[]
-}*/
-
 const BigObjTypeUsersMapper: VBINObjectMapper = {
     assignValue: function (object: any, keyID: number, value: any): void {
         switch(keyID) {
@@ -120,7 +110,7 @@ const BigObjTypeUsersMapper: VBINObjectMapper = {
         }
         return true
     },
-    fieldMapper: function (keyID: number): VBINObjectMapper | undefined {
+    fieldMapper: function (_keyID: number): VBINObjectMapper | undefined {
         return undefined
     }
 }
