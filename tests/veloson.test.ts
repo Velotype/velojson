@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter } from '../src/velojson.ts'
+import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter, VBINObjectMapper, VBIN } from '../src/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { fail } from "@std/assert"
 
@@ -63,6 +63,92 @@ function encodeBigObj(inObj: BigObjType): Uint8Array<ArrayBufferLike> {
     rootObj.finalizeHomogenousObjectArray(1, usersArray)
     rootWriter.finalizeRootObject(rootObj)
     return rootWriter.toUint8ArrayAndRelease()
+}
+
+/*type BigObjType = {
+    users: { // keyid = 1
+        id: number // keyid = 1
+        name: string // keyid = 2
+        active: boolean // keyid = 3
+        score: number // keyid = 4
+        tags: string[] // keyid = 5
+    }[]
+}*/
+
+const BigObjTypeUsersMapper: VBINObjectMapper = {
+    assignValue: function (object: any, keyID: number, value: any): void {
+        switch(keyID) {
+            case 1: {
+                if (typeof value !== 'number') {
+                    throw Error('Invalid value type for id field')
+                }
+                object.id = value
+            break
+            }
+            case 2: {
+                if (typeof value !== 'string') {
+                    throw Error('Invalid value type for name field')
+                }
+                object.name = value
+            break
+            }
+            case 3: {
+                if (typeof value !== 'boolean') {
+                    throw Error('Invalid value type for active field')
+                }
+                object.active = value
+            break
+            }
+            case 4: {
+                if (typeof value !== 'number') {
+                    throw Error('Invalid value type for score field')
+                }
+                object.score = value
+            break
+            }
+            case 5: {
+                if (Array.isArray(value) === false) {
+                    throw Error('Invalid value type for tags field')
+                }
+                object.tags = value
+            }
+        }
+    },
+    hasAllRequiredFields: function (object: any): boolean {
+        if (object.users === undefined) {
+            return false
+        }
+        return true
+    },
+    fieldMapper: function (keyID: number): VBINObjectMapper | undefined {
+        return undefined
+    }
+}
+
+const BigObjTypeMapper: VBINObjectMapper = {
+    assignValue: function (object: any, keyID: number, value: any): void {
+        switch(keyID) {
+            case 1: {
+                if (Array.isArray(value) === false) {
+                    throw Error('Invalid value type for users field')
+                }
+                object.users = value
+            }
+        }
+    },
+    hasAllRequiredFields: function (object: any): boolean {
+        if (object.users === undefined) {
+            return false
+        }
+        return true
+    },
+    fieldMapper: function (keyID: number): VBINObjectMapper | undefined {
+        switch(keyID) {
+            case 1:
+                return BigObjTypeUsersMapper
+        }
+        return undefined
+    }
 }
 
 describe('test vson encoding and decoding', () => {
@@ -135,16 +221,19 @@ describe('test vson encoding and decoding', () => {
                     const jsonCompare = JSON.stringify(value)
                     const encoded = encodeBigObj(value)
                     const encodedArray = Array.from(encoded)
+                    const vbinDecode = VBIN.decode(encoded, BigObjTypeMapper)
                     const vsonDecode = VSON.decode(encoded)
                     const vsonCompare = VSON.encode(value)
                     if (expectedBinaryValue !== undefined && !deepEqual(encodedArray, expectedBinaryValue, true)) {
                         console.error('Actual:  ', encodedArray)
                         console.error('VSON:    ', JSON.stringify(vsonDecode))
+                        console.error('VBIN:    ', JSON.stringify(vbinDecode))
                         fail(`ERROR: ${name} failed VBIN binary encoding`)
                     } else if (expectedRoundTripVSONValue !== undefined && !deepEqual(vsonDecode, expectedRoundTripVSONValue, true)) {
                         console.error('Expected:', expectedRoundTripVSONValue)
                         console.error('Actual:  ', vsonDecode)
                         console.error('VSON:    ', JSON.stringify(vsonDecode))
+                        console.error('VBIN:    ', JSON.stringify(vbinDecode))
                         fail(`ERROR: ${name} failed VBIN->VSON round trip encoding`)
                     } else {
                         console.log(`OK  ${name.padEnd(28)} ${encoded.length} VBIN bytes vs ${vsonCompare.length} vson bytes vs ${jsonCompare.length} json bytes (${jsonCompare.length - encoded.length} fewer than json ${encoded.length - vsonCompare.length} vs vson)`)
@@ -260,7 +349,7 @@ describe('test vson encoding and decoding', () => {
     }
     const iterations = 50
     it({
-        name: "Faster than JSON.parse(JSON.stringify(obj)) for an object with many tricky numbers",
+        name: "VSON Faster than JSON.parse(JSON.stringify(obj)) for an object with many tricky numbers",
         fn: () => {
             try {
                 const startJSON = performance.now()
@@ -281,7 +370,7 @@ describe('test vson encoding and decoding', () => {
                 const timeVSON = endVSON - startVSON
 
                 if (timeVSON > timeJSON) {
-                    fail(`ERROR: failed to be faster than JSON.parse(JSON.stringify()) VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
+                    fail(`ERROR: VSON failed to be faster than JSON.parse(JSON.stringify()) VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
                 } else {
                     console.log(`OK  (${Math.floor(timeVSON - timeJSON)} faster than JSON.parse(JSON.stringify()) after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
                 }
@@ -292,7 +381,7 @@ describe('test vson encoding and decoding', () => {
         }
     })
     it({
-        name: "Faster than JSON.stringify(obj) for an object with many tricky numbers",
+        name: "VSON Faster than JSON.stringify(obj) for an object with many tricky numbers",
         fn: () => {
             try {
                 const startJSON = performance.now()
@@ -325,7 +414,7 @@ describe('test vson encoding and decoding', () => {
         }
     })
     it({
-        name: "Faster than JSON.parse(obj) for an object with many tricky numbers",
+        name: "VSON Faster than JSON.parse(obj) for an object with many tricky numbers",
         fn: () => {
             try {
                 const strObj = JSON.stringify(bigTricky)
@@ -358,5 +447,103 @@ describe('test vson encoding and decoding', () => {
             }
         }
     })
+    it({
+        name: "VBIN Faster than JSON.parse(JSON.stringify(obj)) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const startJSON = performance.now()
+                let totalLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = JSON.parse(JSON.stringify(bigTricky))
+                    totalLen += obj.users.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
 
+                const startVSON = performance.now()
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = VBIN.decode(encodeBigObj(bigTricky), BigObjTypeMapper)
+                    totalLen += obj.users.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: VSON failed to be faster than JSON.parse(JSON.stringify()) VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
+                } else {
+                    console.log(`OK  (${Math.floor(timeVSON - timeJSON)} faster than JSON.parse(JSON.stringify()) after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
+    it({
+        name: "VBIN Faster than JSON.stringify(obj) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const startJSON = performance.now()
+                let totalJLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const str = JSON.stringify(bigTricky)
+                    totalJLen += str.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
+
+                const startVSON = performance.now()
+                let totalVLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const str = encodeBigObj(bigTricky)
+                    totalVLen += str.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: ${"JSON.stringify(obj)".padEnd(28)} failed to be faster than JSON.stringify() VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen}`)
+                } else {
+                    console.log(`OK  ${"JSON.stringify(obj)".padEnd(28)} (${Math.floor(timeVSON - timeJSON)} faster than JSON.stringify() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} Vlen: ${totalVLen} Jlen: ${totalJLen})`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
+    it({
+        name: "VBIN Faster than JSON.parse(obj) for an object with many tricky numbers",
+        fn: () => {
+            try {
+                const strObj = JSON.stringify(bigTricky)
+                const startJSON = performance.now()
+                let totalLen = 0
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = JSON.parse(strObj)
+                    totalLen += obj.users.length
+                }
+                const endJSON = performance.now()
+                const timeJSON = endJSON - startJSON
+
+                const binObj = encodeBigObj(bigTricky)
+                const startVSON = performance.now()
+                for (let i: number = 1; i <= iterations; i++) {
+                    const obj = VBIN.decode(binObj, BigObjTypeMapper)
+                    totalLen += obj.users.length
+                }
+                const endVSON = performance.now()
+                const timeVSON = endVSON - startVSON
+
+                if (timeVSON > timeJSON) {
+                    fail(`ERROR: ${"JSON.parse(obj)".padEnd(28)} failed to be faster than JSON.parse() VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen})`)
+                } else {
+                    console.log(`OK  ${"JSON.parse(obj)".padEnd(28)} (${Math.floor(timeVSON - timeJSON)} faster than JSON.parse() after ${iterations} iterations, VSON time: ${timeVSON} JSON time: ${timeJSON} (ignore: ${totalLen}))`)
+                }
+            } catch (e) {
+                console.log("Exception", e)
+                fail("ERROR: Thrown exception")
+            }
+        }
+    })
 })

@@ -126,3 +126,9 @@ export const textDecoder = new TextDecoder('utf-8', { fatal: true })
 
 /** Threshold for detection of homogenous arrays - arrays above this length will be tested for homogeneity */
 export const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
+
+export type VBINObjectMapper = {
+    assignValue: (object: any, keyID: number, value: any) => void
+    hasAllRequiredFields: (object: any) => boolean
+    fieldMapper: (keyID: number) => VBINObjectMapper | undefined
+}

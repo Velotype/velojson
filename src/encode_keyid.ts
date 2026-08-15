@@ -84,6 +84,13 @@ export class VBINObjectWriter {
         this.writer.writeBytes(body)
         childWriter.release()
     }
+    finalizeNumberArray(key_id: number, childWriter: VBINNumberArrayWriter): void {
+        this.writer.writeVarint((key_id * 8) + WireType.Array)
+        const body = childWriter.toUint8Array()
+        this.writer.writeVarint(body.length * 2)
+        this.writer.writeBytes(body)
+        childWriter.release()
+    }
     finalizeHomogenousStringArray(key_id: number, childWriter: VBINHomogenousStringArrayWriter): void {
         this.writer.writeVarint((key_id * 8) + WireType.Array)
         const body = childWriter.toUint8Array()
@@ -159,53 +166,26 @@ export class VBINArrayWriter {
         this.writer.writeVarint(WireType.String)
         this.writer.writeString(value)
     }
-    finalizeObjectInArray(childWriter: VBINObjectWriter): void {
-        this.writer.writeVarint(WireType.Object)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint(body.length)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
-    finalizeArrayInArray(childWriter: VBINArrayWriter): void {
-        this.writer.writeVarint(WireType.Array)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint(body.length * 2)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
-    finalizeHomogenousStringArrayInArray(childWriter: VBINHomogenousStringArrayWriter): void {
-        this.writer.writeVarint(WireType.Array)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint((body.length * 2) + 1)
-        this.writer.writeVarint(WireType.String)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
-    finalizeHomogenousPosIntArrayInArray(childWriter: VBINHomogenousPosIntArrayWriter): void {
-        this.writer.writeVarint(WireType.Array)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint((body.length * 2) + 1)
-        this.writer.writeVarint(WireType.PosInt)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
-    finalizeHomogenousDoubleArrayInArray(childWriter: VBINHomogenousDoubleArrayWriter): void {
-        this.writer.writeVarint(WireType.Array)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint((body.length * 2) + 1)
-        this.writer.writeVarint(WireType.Double)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
-    finalizeHomogenousObjectArrayInArray(childWriter: VBINHomogenousObjectArrayWriter): void {
-        this.writer.writeVarint(WireType.Array)
-        const body = childWriter.toUint8Array()
-        this.writer.writeVarint((body.length * 2) + 1)
-        this.writer.writeVarint(WireType.Object)
-        this.writer.writeBytes(body)
-        childWriter.release()
-    }
+}
 
+export class VBINNumberArrayWriter {
+    private writer: ByteWriter = acquireWriter()
+
+    release(): void {
+        releaseWriter(this.writer)
+    }
+    toUint8Array(): Uint8Array<ArrayBufferLike> {
+        return this.writer.toUint8Array()
+    }
+    encodeNumberValueInArray(value: number): void {
+        if (Number.isInteger(value) && value as number >= 0 && Number.isSafeInteger(value)) {
+            this.writer.writeVarint(WireType.PosInt)
+            this.writer.writeVarint(value)
+        } else {
+            this.writer.writeVarint(WireType.Double)
+            this.writer.writeDouble(value)
+        }
+    }
 }
 
 export class VBINHomogenousStringArrayWriter {

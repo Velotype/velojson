@@ -1,4 +1,4 @@
-import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, WireType } from "./common.ts";
+import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, VBINObjectMapper, WireType } from "./common.ts";
 
 export class ByteReader {
     private pos = 0
@@ -70,7 +70,7 @@ export class ByteReader {
         return textDecoder.decode(this.readBytes(len))
     }
 
-    private decodeObjectValue(): Record<string, JSONValue> {
+    private decodeObjectValue(mapper?: VBINObjectMapper): Record<string, JSONValue> {
         const len = this.readVarint()
         // enterSection
         if (this.pos + len > this.limit) {
@@ -83,7 +83,7 @@ export class ByteReader {
         // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
         const obj: Record<string, JSONValue> = Object.create(null)
         while (this.limit > this.pos) {
-            this.decodeObjectFieldValue(obj)
+            this.decodeObjectFieldValue(obj, mapper)
         }
         // exitSection
         this.pos = this.limit
@@ -91,7 +91,7 @@ export class ByteReader {
         return obj
     }
 
-    private decodeArrayValue(): JSONValue[] {
+    private decodeArrayValue(keyData?: number, mapper?: VBINObjectMapper): JSONValue[] {
         const lengthAndFlag = this.readVarint()
         let len: number
         let isHomogeneous: boolean
@@ -144,13 +144,27 @@ export class ByteReader {
                         arr.push(textDecoder.decode(this.readBytes(len)))
                     }
                 break
-                case WireType.Object:
+                case WireType.Object: {
+                    let fieldMapper: VBINObjectMapper | undefined
+                    if (mapper !== undefined) {
+                        if (keyData === undefined) {
+                            throw new Error("velojson: missing keyID")
+                        }
+                        fieldMapper = mapper.fieldMapper(keyData)
+                        if (fieldMapper === undefined) {
+                            throw new Error(`velojson: unknown field keyID ${keyData}`)
+                        }
+                    }
                     arr = []
                     while (this.limit > this.pos) {
-                        arr.push(this.decodeObjectValue())
+                        arr.push(this.decodeObjectValue(fieldMapper))
                     }
                 break
+                }
                 case WireType.Array:
+                    if (mapper !== undefined) {
+                        throw new Error("velojson: VBIN Array not allowed to contain nested arrays")
+                    }
                     arr = []
                     while (this.limit > this.pos) {
                         arr.push(this.decodeArrayValue())
@@ -162,7 +176,7 @@ export class ByteReader {
         } else {
             arr = []
             while (this.limit > this.pos) {
-                arr.push(this.decodeArrayEntryValue())
+                arr.push(this.decodeArrayEntryValue(mapper))
             }
         }
 
@@ -197,7 +211,7 @@ export class ByteReader {
         return arr
     }
 
-    decodeRootValue(): JSONValue {
+    decodeRootValue(mapper?: VBINObjectMapper): JSONValue {
         const header = this.readVarint()
         let wireType: number
         let encodingFormat: number
@@ -252,13 +266,13 @@ export class ByteReader {
             if (wireType !== WireType.Object) {
                 throw new Error('velojson: KeyIDs encoding format only valid for Object root values')
             }
-            return this.decodeObjectValue()
+            return this.decodeObjectValue(mapper)
         } else {
             throw new Error('velojson: unrecognized encoding format')
         }
     }
 
-    private decodeObjectFieldValue(obj: Record<string, JSONValue>) {
+    private decodeObjectFieldValue(obj: Record<string, JSONValue>, mapper?: VBINObjectMapper) {
         const header = this.readVarint()
         let wireType: number
         let keyData: number
@@ -281,7 +295,44 @@ export class ByteReader {
                     throw new Error('velojson: key index out of bounds')
                 }
             } else if (this.encodingFormat === EncodingFormat.KeyID) {
-                key = String(keyData)
+                if (mapper === undefined) {
+                    key = String(keyData)
+                } else {
+                    switch (wireType) {
+                        case WireType.Null:
+                            mapper.assignValue(obj, keyData, null)
+                        break
+                        case WireType.False:
+                            mapper.assignValue(obj, keyData, false)
+                        break
+                        case WireType.True:
+                            mapper.assignValue(obj, keyData, true)
+                        break
+                        case WireType.PosInt:
+                            mapper.assignValue(obj, keyData, this.readVarint())
+                        break
+                        case WireType.Double:
+                            mapper.assignValue(obj, keyData, this.readDouble())
+                        break
+                        case WireType.String:
+                            mapper.assignValue(obj, keyData, this.readString())
+                        break
+                        case WireType.Object: {
+                            const fieldMapper = mapper.fieldMapper(keyData)
+                            if (fieldMapper === undefined) {
+                                throw new Error(`velojson: unknown field keyID ${keyData}`)
+                            }
+                            mapper.assignValue(obj, keyData, this.decodeObjectValue(fieldMapper))
+                        break
+                        }
+                        case WireType.Array:
+                            mapper.assignValue(obj, keyData, this.decodeArrayValue(keyData, mapper))
+                        break
+                        default:
+                            throw new Error(`velojson: unknown wire type ${wireType}`)
+                    }
+                    return
+                }
             } else {
                 throw new Error('velojson: encoding format not recognized')
             }
@@ -320,7 +371,7 @@ export class ByteReader {
                 throw new Error(`velojson: unknown wire type ${wireType}`)
         }
     }
-    private decodeArrayEntryValue(): JSONValue {
+    private decodeArrayEntryValue(mapper?: VBINObjectMapper): JSONValue {
         const header = this.readVarint()
         let wireType: number
         let keyData: number
@@ -349,10 +400,18 @@ export class ByteReader {
                 return this.readDouble()
             case WireType.String:
                 return this.readString()
-            case WireType.Object:
+            case WireType.Object: {
+                if (mapper !== undefined) {
+                    throw new Error("velojson: VBIN Non-homogenous Array not allowed to contain Object")
+                }
                 return this.decodeObjectValue()
-            case WireType.Array:
+            }
+            case WireType.Array: {
+                if (mapper !== undefined) {
+                    throw new Error("velojson: VBIN Non-homogenous Array not allowed to contain Array")
+                }
                 return this.decodeArrayValue()
+            }
             default:
                 throw new Error(`velojson: unknown wire type ${wireType}`)
         }
