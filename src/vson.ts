@@ -1,7 +1,7 @@
 
 import { ByteReader } from "./byte_reader.ts"
 import { acquireWriter, releaseWriter } from "./byte_writer.ts"
-import { EncodingFormat, getWireType, WireType, type JSONValue } from "./common.ts"
+import { EncodingFormat, getWireType, VBINObjectMapper, WireType, type JSONValue } from "./common.ts"
 import { encodeValue_base_format } from "./encode_base.ts"
 import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key_table_format } from "./encode_keytable.ts"
 
@@ -97,4 +97,28 @@ export function decodeVSON(data: Uint8Array): any {
     }
     const reader = new ByteReader(data)
     return reader.decodeRootValue()
+}
+
+/**
+ * Decode a VBIN binary buffer back into a JSON-representable value.
+ *
+ * Note: Will throw on decoding errors
+ *
+ * Example:
+ * ```ts
+ * const startObj = { name: "Some name", age: 20, address: null }
+ * const objBinary: Uint8Array = encodeVSON(startObj)
+ * const endObj = decodeVBIN(objBinary, mapper)
+ *
+ * console.log(JSON.stringify(endObj))
+ * // Expected output: {"name":"Some name","age":20,"address":null}
+ * ```
+ */
+// deno-lint-ignore no-explicit-any
+export function decodeVBIN(data: Uint8Array, mapper: VBINObjectMapper): any {
+    if (data.length == 0) {
+        return undefined
+    }
+    const reader = new ByteReader(data)
+    return reader.decodeRootValue(mapper)
 }
