@@ -105,7 +105,24 @@ const BigObjTypeUsersMapper: VBINObjectMapper = {
         }
     },
     hasAllRequiredFields: function (object: any): boolean {
-        if (object.users === undefined) {
+        if (object.id === undefined) {
+            console.log("id not defined")
+            return false
+        }
+        if (object.name === undefined) {
+            console.log("name not defined")
+            return false
+        }
+        if (object.active === undefined) {
+            console.log("active not defined")
+            return false
+        }
+        if (object.score === undefined) {
+            console.log("score not defined")
+            return false
+        }
+        if (object.tags === undefined) {
+            console.log("tags not defined")
             return false
         }
         return true
@@ -128,6 +145,7 @@ const BigObjTypeMapper: VBINObjectMapper = {
     },
     hasAllRequiredFields: function (object: any): boolean {
         if (object.users === undefined) {
+            console.log("users not defined")
             return false
         }
         return true
