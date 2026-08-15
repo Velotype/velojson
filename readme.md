@@ -22,20 +22,22 @@ console.log(JSON.stringify(endObj))
 
 ## Performance:
 
-### For timing:
-Since this library is coded in JavaScript, this runs slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers VSON outperforms, though this is rare).
-
-Unless VSON is engine-native it is expected that it cannot run faster than native provided JSON functions.
-
 ### For size:
-VSON supports two encoding formats:
+Velojson supports three encoding formats:
 
-#### Base format:
+#### VSON - Base format:
 VSON Base format is moderately compressed compared to JSON, consistenty using fewer bytes in nearly all cases though only by 10%-20% for most objects. This is because the VSON Base format directly replicates the structure of JSON. The advantage of this design is that VSON Base can be used in situations envolving streaming and partial decoding.
 
-#### String Table format:
-VSON String Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once and depending on the shape of the JSON object can generate high compression rates, with 50% - 80% reasonable depending on how many keys are duplicated in the data.
+#### VSON - Key Table format:
+VSON Key Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once and depending on the shape of the JSON object this can generate high compression rates, with 50% - 80% size reduction reasonable depending on how many keys are duplicated in the data.
 
+#### VBIN - Key Id format:
+The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. VBIN offers only marginal size reduction from the KeyTable format since the KeyTable is skipped (though this is usually small), however VBIN offers significant performance improvement because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
+
+### For timing:
+The VSON encodings typically run slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers, VSON outperforms - though this is rare).
+
+The VBIN encoding performs significantly faster than native JSON encoding.
 
 ## Base Encoding format:
 
@@ -136,17 +138,17 @@ WIRETYPE is a single byte encoding the wire type of all values in the array
 VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
 
 
-## String Table Encoding format:
+## Key Table Encoding format:
 
-VRoot - `{A: encoding format (1) ++ wire type}{C: encoded value}{D: encoded string table}`
+VRoot - `{A: encoding format (1) ++ wire type}{C: encoded value}{D: encoded key table}`
 
-VStringTable - `{L: encoding length}{C: encoded values}`
+VKeyTable - `{L: encoding length}{C: encoded values}`
 
 A - a pos varint constructed by encoding the bits of the encoding format and appending 3 bits representing the wire type of the root value (must be either Object or Array)
 
 C - the encoded value of the root value
 
-D - a homogenous string array of all keys, note this encoding skips the homogenous bit and the wire type varint since both defined for the string table
+D - a homogenous string array of all keys, note this encoding skips the homogenous bit and the wire type varint since both defined for the key table
 
 VStruct - `{A: key index ++ wire type}{C?: encoded value}`
 
@@ -154,92 +156,19 @@ A - a pos varint constructed by encoding the bits of the key index and appending
 
 C - the encoded value of the wire type (encoding depends on the wire type)
 
-Native wire types:
-* 0 - null
-* 1 - boolean false
-* 2 - boolean true
-* 3 - number (positive integer)
-* 4 - number (double)
-* 5 - string
-* 6 - object
-* 7 - array
+## Key Id Encoding format:
 
+VRoot - `{A: encoding format (2) ++ wire type}{C: encoded value}`
 
-## Per-value encoding
+A - a pos varint constructed by encoding the bits of the encoding format and appending 3 bits representing the wire type of the root value (must be either Object or Array)
 
-### 0 - null
+C - the encoded value of the root value, for VBIN this must be an Object at the root
 
-`{A: key index ++ 000}`
+VStruct - `{A: key index ++ wire type}{C?: encoded value}`
 
-Note - there is no "encoded value" since the wire type is sufficient
+A - a pos varint constructed by encoding the bits of the key index and appending 3 bits representing the wire type, note that the key index is 1-indexed and a key index of zero represents no key
 
-### 1 - boolean false
-
-`{A: key index ++ 001}`
-
-Note - there is no "encoded value" since the wire type is sufficient
-
-### 2 - boolean true
-
-`{A: key index ++ 010}`
-
-Note - there is no "encoded value" since the wire type is sufficient
-
-### 3 - number (positive integer)
-
-`{A: key index ++ 011}{C: encoded value}`
-
-C - a positive integer (or zero) is encoded as a pos varint (1 to 7 bytes)
-
-### 4 - number (double)
-
-`{A: key index ++ 100}{C: encoded value}`
-
-C - any number other than zero or a positive integer is encoded as an 8 byte double in little endian format
-
-### 5 - string
-
-`{A: key index ++ 101}{C: encoded value}`
-
-C - `{LENGTH}{VALUE?}`
-
-LENGTH is encoded as a pos varint (or zero)
-
-VALUE is a UTF-8 encoded string
-
-### 6 - object
-
-`{A: key index ++ 110}{C: encoded value}`
-
-C - `{LENGTH}{VALUE?}`
-
-LENGTH is encoded as a pos varint (or zero)
-
-VALUE is a series of `VStruct` encoded values with a requirement that all have non-zero key length
-
-### 7 - array
-
-`{A: key index ++ 111}{C: encoded value}`
-
-Arrays are split into two sub-cases: heterogenous arrays and homogenous arrays
-
-Note: the encoder may choose to use either encoding for homogenous arrays.
-
-#### Heterogenous array:
-C - `{LENGTH ++ 0}{VALUE?}`
-
-LENGTH is encoded as a pos varint (or zero)
-
-VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length
-
-#### Homogenous array:
-C - `{LENGTH ++ 1}{WIRETYPE}{VALUE}`
-
-LENGTH is encoded as a pos varint (or zero)
-
-WIRETYPE is a single byte encoding the wire type of all values in the array
-
-VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
+C - the encoded value of the wire type (encoding depends on the wire type)
 
 
 ## Note on the encoding of `undefined`
