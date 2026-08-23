@@ -140,6 +140,7 @@ const BigObjTypeMapper: VBINObjectMapper = {
                     throw Error('Invalid value type for users field')
                 }
                 object.users = value
+            break
             }
         }
     },
