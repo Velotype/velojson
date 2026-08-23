@@ -1,7 +1,7 @@
 
 import { ByteReader } from "./byte_reader.ts"
 import { acquireWriter, releaseWriter } from "./byte_writer.ts"
-import { EncodingFormat, getWireType, VBINObjectMapper, WireType, type JSONValue } from "./common.ts"
+import { EncodingFormat, getWireType, type VBINObjectMapper, WireType, type JSONValue } from "./common.ts"
 import { encodeValue_base_format } from "./encode_base.ts"
 import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key_table_format } from "./encode_keytable.ts"
 
@@ -19,7 +19,7 @@ import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key
  * ```
  */
 // deno-lint-ignore no-explicit-any
-export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array {
+export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Array<ArrayBuffer> {
     if (value === undefined) {
         return new Uint8Array()
     }
