@@ -1,6 +1,5 @@
 import { textEncoder, UINT32_LIMIT } from "./common.ts"
 
-
 /** Limites size of a pool of ByteWriter objects */
 const WRITER_POOL_LIMIT = 1024
 

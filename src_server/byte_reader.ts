@@ -193,12 +193,11 @@ export class ByteReader {
         return arr
     }
 
-    private decodeStringTableArrayValue(): string[] {
+    private decodeKeyTableArrayValue(): string[] {
         const len = this.readVarint()
 
         // enterSection
         if (this.pos + len > this.limit) {
-            console.log(this.pos, len, this.limit)
             throw new Error('velojson: unexpected end of buffer')
         }
         const previousLimit = this.limit
@@ -254,18 +253,18 @@ export class ByteReader {
             }
         } else if (encodingFormat === EncodingFormat.KeyTable) {
             if (wireType !== WireType.Object && wireType !== WireType.Array) {
-                throw new Error('velojson: StringTable encoding format only valid for Object and Array root values')
+                throw new Error('velojson: KeyTable encoding format only valid for Object and Array root values')
             }
             const pos = this.pos
             const totalValueLen = this.readVarint()
             if (wireType === WireType.Object) {
                 this.pos += totalValueLen
-                this.keyArray = this.decodeStringTableArrayValue()
+                this.keyArray = this.decodeKeyTableArrayValue()
                 this.pos = pos
                 return this.decodeObjectValue()
             } else {
                 this.pos += Math.floor(totalValueLen / 2)
-                this.keyArray = this.decodeStringTableArrayValue()
+                this.keyArray = this.decodeKeyTableArrayValue()
                 this.pos = pos
                 return this.decodeArrayValue()
             }

@@ -3,14 +3,17 @@
     "license": "MIT",
     "version": "0.0.4",
     "exports": {
-        ".": "./src/velojson.ts"
+        ".": "./src_server/velojson.ts",
+        "./browser": "./src_browser/velojson.ts"
     },
     "publish": {
         "exclude": [
-            "tests/"
+            "tests/",
+            "dist/"
         ]
     },
     "tasks": {
-        "test": "cd tests && deno test"
+        "test": "cd tests && deno test",
+        "browser_bundle": "deno bundle --minify ./src_browser/velojson.ts --output ./dist/velojson_browser.min.js --sourcemap"
     }
 }

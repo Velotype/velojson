@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
-import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter, VBINObjectMapper, VBIN } from '../src/velojson.ts'
+import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter, VBINObjectMapper, VBIN } from '../src_server/velojson.ts'
+import { VSON as VSON_browser } from '../src_browser/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { fail } from "@std/assert"
 
@@ -173,16 +174,24 @@ describe('test vson encoding and decoding', () => {
 
                     const encoded = VSON.encode(value, encodingFormat)
                     const decoded = VSON.decode(encoded)
-                    if (expectedRoundTripValue === undefined && !deepEqual(decoded, value, false)) {
+                    const encoded_browser = (value !== null && typeof value == "object" || Array.isArray(value)) ? VSON_browser.encode(value) : null
+                    const decoded_browser = (encoded_browser !== null) ? VSON_browser.decode(encoded_browser) : null
+                    if (expectedRoundTripValue === undefined && !deepEqual(decoded, value, false) && !deepEqual(decoded_browser, value, false)) {
                         console.error('Expected:', jsonString, value)
                         console.error('Encoded:', encoded)
+                        console.error('Encoded_browser:', encoded_browser)
                         console.error('Actual decoded:  ', JSON.stringify(decoded), decoded)
+                        console.error('Actual decoded_browser:  ', JSON.stringify(decoded_browser), decoded_browser)
                         fail(`ERROR: ${name} failed round-trip`)
-                    } else if (expectedRoundTripValue !== undefined && !deepEqual(decoded, expectedRoundTripValue, true)) {
+                    } else if (expectedRoundTripValue !== undefined && !deepEqual(decoded, expectedRoundTripValue, true) && !deepEqual(decoded_browser, expectedRoundTripValue, true)) {
                         console.error('Expected:', JSON.stringify(expectedRoundTripValue), expectedRoundTripValue)
                         console.error('Encoded:', encoded)
+                        console.error('Encoded_browser:', encoded_browser)
                         console.error('Actual decoded:  ', JSON.stringify(decoded), decoded)
+                        console.error('Actual decoded_browser:  ', JSON.stringify(decoded_browser), decoded_browser)
                         fail(`ERROR: ${name} failed explicit round-trip`)
+                    } else if (encodingFormat === EncodingFormat.KeyTable && encoded_browser !== null && encoded.length !== encoded_browser.length) {
+                        fail(`ERROR: ${name} browser encoded to a different length`)
                     } else {
                         if (encoded.length < jsonUtf8Bytes.length) {
                             console.log(`OK  ${name.padEnd(28)} (${encoded.length} vson bytes - ${jsonUtf8Bytes.length} json bytes - ${jsonUtf8Bytes.length - encoded.length} fewer bytes ${Math.floor(100*(jsonUtf8Bytes.length - encoded.length)/jsonUtf8Bytes.length)}%)`)
