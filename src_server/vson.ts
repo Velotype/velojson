@@ -10,7 +10,7 @@ import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key
  *
  * Note: Will throw on encoding errors
  *
- * @param [EncodingFormat] encodingFormat - defaults to StringTable if the value is an object or array
+ * @param [EncodingFormat] encodingFormat - defaults to KeyTable if the value is an object or array
  *
  * Example:
  * ```ts
@@ -42,14 +42,14 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
     } else if (writerEncodingFormat === EncodingFormat.KeyTable) {
         const wireType = getWireType(value)
         writer.writeVarint((writerEncodingFormat * 8) + wireType)
-        const writerStringTableMap: Map<string, number> = new Map<string, number>()
-        const writerStringTableArray: string[] = []
+        const writerKeyTableMap: Map<string, number> = new Map<string, number>()
+        const writerKeyTableArray: string[] = []
         switch (wireType) {
             case WireType.Object: {
                 const bodyWriter = acquireWriter()
                 const obj = value as Record<string, JSONValue>
                 for (const k of Object.keys(obj)) {
-                    encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
+                    encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
                 }
                 const body = bodyWriter.toUint8Array()
                 writer.writeVarint(body.length)
@@ -58,12 +58,12 @@ export function encodeVSON(value: any, encodingFormat?: EncodingFormat): Uint8Ar
             break
             }
             case WireType.Array:
-                encodeArrayValue_key_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
+                encodeArrayValue_key_table_format(writer, value as JSONValue[], writerKeyTableArray, writerKeyTableMap)
             break
             default:
-                throw new Error('velojson: String table encoding format only supported for root Object or Array types')
+                throw new Error('velojson: KeyTable encoding format only supported for root Object or Array types')
         }
-        encodeKeyTableValue(writer, writerStringTableArray)
+        encodeKeyTableValue(writer, writerKeyTableArray)
     } else {
         throw new Error('velojson: encoding format not recognized')
     }
