@@ -1,7 +1,7 @@
 {
     "name": "@velotype/velojson",
     "license": "MIT",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "exports": {
         ".": "./src_server/velojson.ts",
         "./browser": "./src_browser/velojson.ts"
