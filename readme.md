@@ -32,14 +32,24 @@ VSON Base format is moderately compressed compared to JSON, consistenty using fe
 VSON Key Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once and depending on the shape of the JSON object this can generate high compression rates, with 50% - 80% size reduction reasonable depending on how many keys are duplicated in the data.
 
 #### VBIN - Key Id format:
-The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. VBIN offers only marginal size reduction from the KeyTable format since the KeyTable is skipped (though this is usually small), however VBIN offers significant performance improvement because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
+The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. VBIN offers only marginal size reduction from the KeyTable format since the KeyTable is skipped (this is usually small), however VBIN offers significant performance improvement because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
 
 ### For timing:
 The VSON encodings typically run slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers, VSON outperforms - though this is rare).
 
 The VBIN encoding performs significantly faster than native JSON encoding.
 
-## Base Encoding format:
+## Exported modules:
+
+There are two exported modules:
+
+"@velotype/velojson" - Contains code optimized for speed, designed for server-side usage. This code supports all EncodingFormats (VSON-Base, VSON-KeyTable, and VBIN)
+
+"@velotype/velojson/browser" - Contains code optimized for minified size (~4.3kb). This code supports only the VSON-KeyTable EncodingFormat.
+
+# Format specs:
+
+## VSON - Base Encoding format:
 
 VRoot - `{A: encoding format (0) ++ wire type}{C?: encoded value}`
 
@@ -138,7 +148,7 @@ WIRETYPE is a single byte encoding the wire type of all values in the array
 VALUE is a series of `VStruct` encoded values with a requirement that all have zero key length and skip encoding their wire type byte (since they are all homogenous)
 
 
-## Key Table Encoding format:
+## VSON - Key Table Encoding format:
 
 VRoot - `{A: encoding format (1) ++ wire type}{C: encoded value}{D: encoded key table}`
 
@@ -156,7 +166,7 @@ A - a pos varint constructed by encoding the bits of the key index and appending
 
 C - the encoded value of the wire type (encoding depends on the wire type)
 
-## Key Id Encoding format:
+## VBIN - Key Id Encoding format:
 
 VRoot - `{A: encoding format (2) ++ wire type}{C: encoded value}`
 
@@ -169,7 +179,6 @@ VStruct - `{A: key index ++ wire type}{C?: encoded value}`
 A - a pos varint constructed by encoding the bits of the key index and appending 3 bits representing the wire type, note that the key index is 1-indexed and a key index of zero represents no key
 
 C - the encoded value of the wire type (encoding depends on the wire type)
-
 
 ## Note on the encoding of `undefined`
 
