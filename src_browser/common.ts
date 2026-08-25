@@ -68,10 +68,8 @@ export function getWireType(value: JSONValue): WireType {
 export const textEncoder = new TextEncoder()
 export const textDecoder = new TextDecoder('utf-8', { fatal: true })
 
-/** Throws a `velojson: <msg>` error. Typed `never` so call sites can use it
- *  as an expression (`x = cond ? y : boom(...)`) as well as a statement. */
 export function boom(): never {
-    throw new Error('velojson encoding failure')
+    throw new Error('vson error')
 }
 
 /**
