@@ -1,6 +1,6 @@
 import { ByteReader } from "./byte_reader.ts"
 import { acquireWriter } from "./byte_writer.ts"
-import { boom, EncodingFormat_KeyTable, getWireType, WireType, type JSONValue } from "./common.ts"
+import { boom, getWireType, WireType, type JSONValue } from "./common.ts"
 import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeObjectBody } from "./encode_keytable.ts"
 
 /**
@@ -23,7 +23,7 @@ export function encodeVSON(value: any): Uint8Array<ArrayBuffer> {
     const writer = acquireWriter()
 
     const wireType = getWireType(value)
-    writer.wv(EncodingFormat_KeyTable * 8 + wireType)
+    writer.wv(8 + wireType) // Note this directly encodes (1 * 8) from (EncodingFormat.KeyTable * 8)
 
     const writerStringTableMap: Map<string, number> = new Map<string, number>()
     const writerStringTableArray: string[] = []
