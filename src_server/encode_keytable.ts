@@ -173,7 +173,7 @@ export function encodeKeyTableValue(writer: ByteWriter, arr: string[]): void {
     for (let i = 0; i < arr.length; i++) {
         const item = arr[i]
         if (item === undefined || item === null) {
-            throw new Error('velojson: string table cannot have undefined or null values')
+            throw new Error('velojson: KeyTable cannot have undefined or null values')
         }
         bodyWriter.writeString(item)
     }

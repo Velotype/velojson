@@ -1,41 +1,38 @@
-import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, WireType } from "./common.ts"
+import { boom, EncodingFormat_KeyTable, type JSONValue, splitPacked, textDecoder, WireType } from "./common.ts"
 
 export class ByteReader {
-    private pos = 0
-    private data: Uint8Array
-    private view: DataView
-    /** Read boundary for the current nested section (top-level: data.length) */
-    private limit: number
-    private keyArray: string[] = []
-    private encodingFormat: EncodingFormat = EncodingFormat.Base
+    /** pos */
+    private p = 0
+    /** data */
+    private d: Uint8Array
+    /** view */
+    private v: DataView
+    /** limit - Read boundary for the current nested section (top-level: data.length) */
+    private m: number
+    /** keyArray */
+    private k: string[] = []
 
     constructor(data: Uint8Array) {
-        this.data = data
-        this.view = new DataView(data.buffer, data.byteOffset, data.byteLength)
-        this.limit = data.length
+        this.d = data
+        this.v = new DataView(data.buffer, data.byteOffset, data.byteLength)
+        this.m = data.length
     }
 
-    private readByte(): number {
-        if (this.pos < this.limit) {
-            return this.data[this.pos++]
-        } else {
-            throw new Error('velojson: unexpected end of buffer')
-        }
+    #readByte(): number {
+        if (this.p < this.m) return this.d[this.p++]
+        boom() // 'unexpected eob'
     }
 
-    private readBytes(n: number): Uint8Array {
-        if (this.pos + n <= this.limit) {
-            const slice = this.data.subarray(this.pos, this.pos + n)
-            this.pos += n
-            return slice
-        } else {
-            throw new Error('velojson: unexpected end of buffer')
-        }
+    #readBytes(n: number): Uint8Array {
+        if (this.p + n > this.m) boom() // 'unexpected eob'
+        const slice = this.d.subarray(this.p, this.p + n)
+        this.p += n
+        return slice
     }
 
-    private readVarint(): number {
+    #readVarint(): number {
         // Fast path: single-byte varint
-        const first = this.readByte()
+        const first = this.#readByte()
         if ((first & 0x80) === 0) {
             return first
         }
@@ -45,290 +42,184 @@ export class ByteReader {
         let byte: number
         let bytesRead = 1
         do {
-            byte = this.readByte()
+            byte = this.#readByte()
             result += (byte & 0x7f) * multiplier
             multiplier *= 128
-            bytesRead++
-            if (bytesRead > 10) {
-                throw new Error('velojson: varint too long (corrupt data)')
-            }
+            if (++bytesRead > 10) boom() // 'varint invalid'
         } while (byte & 0x80)
         return result
     }
 
-    private readDouble(): number {
-        if (this.pos + 8 > this.limit) {
-            throw new Error('velojson: unexpected end of buffer')
-        }
-        const value = this.view.getFloat64(this.pos, true)
-        this.pos += 8
+    #readDouble(): number {
+        if (this.p + 8 > this.m) boom() // 'unexpected eob'
+        const value = this.v.getFloat64(this.p, true)
+        this.p += 8
         return value
     }
 
-    private readString(): string {
-        const len = this.readVarint()
-        return textDecoder.decode(this.readBytes(len))
+    #readString(): string {
+        const len = this.#readVarint()
+        return textDecoder.decode(this.#readBytes(len))
     }
 
-    private decodeObjectValue(): Record<string, JSONValue> {
-        const len = this.readVarint()
-        // enterSection
-        if (this.pos + len > this.limit) {
-            throw new Error(`velojson: unexpected end of buffer ${this.pos} ${len} ${this.limit}`)
+    /** Enter a length-prefixed nested section, narrowing `m` (limit) to `p + len`.
+     *  Returns the previous limit; pass it to `ex` when done reading the section. */
+    #enterSection(len: number): number {
+        if (this.p + len > this.m) {
+            boom() // 'unexpected eob'
         }
-        const previousLimit = this.limit
-        this.limit = this.pos + len
+        const previousLimit = this.m
+        this.m = this.p + len
+        return previousLimit
+    }
+
+    #exitSection(previousLimit: number): void {
+        this.p = this.m
+        this.m = previousLimit
+    }
+
+    #decodeObjectValue(): Record<string, JSONValue> {
+        const previousLimit = this.#enterSection(this.#readVarint())
 
         // Create a null prototype object so that the __proto__ key is not restricted
         // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#null-prototype_objects
         const obj: Record<string, JSONValue> = Object.create(null)
-        while (this.limit > this.pos) {
-            this.decodeObjectFieldValue(obj)
+        while (this.m > this.p) {
+            this.#decodeObjectFieldValue(obj)
         }
-        // exitSection
-        this.pos = this.limit
-        this.limit = previousLimit
+        this.#exitSection(previousLimit)
         return obj
     }
 
-    private decodeArrayValue(): JSONValue[] {
-        const lengthAndFlag = this.readVarint()
-        let len: number
-        let isHomogeneous: boolean
-        if (lengthAndFlag < UINT32_LIMIT) {
-            isHomogeneous = (lengthAndFlag & 1) === 1
-            len = lengthAndFlag >>> 1
-        } else {
-            isHomogeneous = (lengthAndFlag % 2) === 1
-            len = Math.floor(lengthAndFlag / 2)
-        }
+    #decodeArrayValue(): JSONValue[] {
+        const [flag, len] = splitPacked(this.#readVarint(), 1)
+        const isHomogeneous = flag === 1
 
-        // enterSection
-        if (this.pos + len > this.limit) {
-            throw new Error(`velojson: unexpected end of buffer ${this.pos} ${len} ${this.limit}`)
-        }
-        const previousLimit = this.limit
-        this.limit = this.pos + len
-
-        let arr: JSONValue[]
+        const previousLimit = this.#enterSection(len)
+        const arr: JSONValue[] = []
 
         if (isHomogeneous) {
-            const sharedType = this.readByte()
-            if (sharedType === WireType.Null || sharedType === WireType.False || sharedType === WireType.True) {
-                throw new Error('velojson: homogeneous array cannot use a zero-payload wire type')
+            const sharedType = this.#readByte()
+            if (sharedType === WireType.N || sharedType === WireType.F || sharedType === WireType.T) {
+                boom() // 'invalid array'
             }
             switch (sharedType) {
-                case WireType.PosInt:
-                    arr = []
-                    while (this.limit > this.pos) {
-                        arr.push(this.readVarint())
+                case WireType.P:
+                    while (this.m > this.p) {
+                        arr.push(this.#readVarint())
                     }
                 break
-                case WireType.Double:
-                    if (this.pos + 8 > this.limit) {
-                        throw new Error('velojson: unexpected end of buffer')
+                case WireType.D:
+                    if (this.p + 8 > this.m || (this.m - this.p) % 8 !== 0) {
+                        boom() // 'unexpected eob'
                     }
-                    if ((this.limit - this.pos) % 8 != 0) {
-                        throw new Error('velojson: unexpected end of buffer')
-                    }
-                    arr = []
-                    while (this.limit > this.pos) {
-                        arr.push(this.view.getFloat64(this.pos, true))
-                        this.pos += 8
+                    while (this.m > this.p) {
+                        arr.push(this.v.getFloat64(this.p, true))
+                        this.p += 8
                     }
                 break
-                case WireType.String:
-                    arr = []
-                    while (this.limit > this.pos) {
-                        const len = this.readVarint()
-                        arr.push(textDecoder.decode(this.readBytes(len)))
+                case WireType.S:
+                    while (this.m > this.p) {
+                        const len = this.#readVarint()
+                        arr.push(textDecoder.decode(this.#readBytes(len)))
                     }
                 break
-                case WireType.Object: {
-                    arr = []
-                    while (this.limit > this.pos) {
-                        arr.push(this.decodeObjectValue())
+                case WireType.O:
+                    while (this.m > this.p) {
+                        arr.push(this.#decodeObjectValue())
                     }
                 break
-                }
-                case WireType.Array:
-                    arr = []
-                    while (this.limit > this.pos) {
-                        arr.push(this.decodeArrayValue())
+                case WireType.A:
+                    while (this.m > this.p) {
+                        arr.push(this.#decodeArrayValue())
                     }
                 break
                 default:
-                    throw new Error(`velojson: invalid wire type ${sharedType}`)
+                    boom() // 'invalid type'
             }
         } else {
-            arr = []
-            while (this.limit > this.pos) {
-                arr.push(this.decodeArrayEntryValue())
+            while (this.m > this.p) {
+                arr.push(this.#decodeArrayEntryValue())
             }
         }
 
-        // exitSection
-        this.pos = this.limit
-        this.limit = previousLimit
+        this.#exitSection(previousLimit)
         return arr
     }
 
-    private decodeKeyTableArrayValue(): string[] {
-        const len = this.readVarint()
+    #decodeKeyTableArrayValue(): string[] {
+        const previousLimit = this.#enterSection(this.#readVarint())
 
-        // enterSection
-        if (this.pos + len > this.limit) {
-            console.log(this.pos, len, this.limit)
-            throw new Error('velojson: unexpected end of buffer')
-        }
-        const previousLimit = this.limit
-        this.limit = this.pos + len
-
-        const arr: string[] = []
         /** The String Table is 1-indexed so inject empty string as a zero-index placeholder */
-        arr.push("")
-        while (this.limit > this.pos) {
-            const len = this.readVarint()
-            arr.push(textDecoder.decode(this.readBytes(len)))
+        const arr: string[] = [""]
+        while (this.m > this.p) {
+            const len = this.#readVarint()
+            arr.push(textDecoder.decode(this.#readBytes(len)))
         }
-
-        // exitSection
-        this.pos = this.limit
-        this.limit = previousLimit
+        this.#exitSection(previousLimit)
         return arr
     }
 
-    decodeRootValue(): JSONValue {
-        const header = this.readVarint()
-        let wireType: number
-        let encodingFormat: number
-        if (header < UINT32_LIMIT) {
-            wireType = header & 7
-            encodingFormat = header >>> 3
-        } else {
-            wireType = header % 8
-            encodingFormat = Math.floor(header / 8)
-        }
-        this.encodingFormat = encodingFormat
-        if (encodingFormat !== EncodingFormat.KeyTable) {
-            throw new Error('velojson: unrecognized encoding format')
+    /** decodeRootValue */
+    dR(): JSONValue {
+        const [wireType, encodingFormat] = splitPacked(this.#readVarint(), 3)
+        if (encodingFormat !== EncodingFormat_KeyTable) boom() // 'invalid format'
+        if (wireType !== WireType.O && wireType !== WireType.A) {
+            boom() // 'value invalid'
         }
 
-        if (wireType !== WireType.Object && wireType !== WireType.Array) {
-            throw new Error('velojson: KeyTable encoding format only valid for Object and Array root values')
+        const pos = this.p
+        const totalValueLen = this.#readVarint()
+        if (wireType === WireType.O) {
+            this.p += totalValueLen
+            this.k = this.#decodeKeyTableArrayValue()
+            this.p = pos
+            return this.#decodeObjectValue()
         }
-        const pos = this.pos
-        const totalValueLen = this.readVarint()
-        if (wireType === WireType.Object) {
-            this.pos += totalValueLen
-            this.keyArray = this.decodeKeyTableArrayValue()
-            this.pos = pos
-            return this.decodeObjectValue()
-        } else {
-            this.pos += Math.floor(totalValueLen / 2)
-            this.keyArray = this.decodeKeyTableArrayValue()
-            this.pos = pos
-            return this.decodeArrayValue()
-        }
+        this.p += Math.floor(totalValueLen / 2)
+        this.k = this.#decodeKeyTableArrayValue()
+        this.p = pos
+        return this.#decodeArrayValue()
     }
 
-    private decodeObjectFieldValue(obj: Record<string, JSONValue>) {
-        const header = this.readVarint()
-        let wireType: number
-        let keyData: number
-        if (header < UINT32_LIMIT) {
-            wireType = header & 7
-            keyData = header >>> 3
-        } else {
-            wireType = header % 8
-            keyData = Math.floor(header / 8)
-        }
+    #decodeObjectFieldValue(obj: Record<string, JSONValue>): void {
+        const [wireType, keyData] = splitPacked(this.#readVarint(), 3)
 
-        let key: string | null = null
-        if (keyData > 0) {
-            if (this.encodingFormat === EncodingFormat.Base) {
-                key = textDecoder.decode(this.readBytes(keyData))
-            } else if (this.encodingFormat === EncodingFormat.KeyTable) {
-                if (keyData <= this.keyArray.length) {
-                    key = this.keyArray[keyData]
-                } else {
-                    throw new Error('velojson: key index out of bounds')
-                }
-            } else {
-                throw new Error('velojson: encoding format not recognized')
-            }
-        } else {
-            throw new Error('velojson: object field is missing a required key')
+        let key: string
+        if (keyData === 0) {
+            key = boom() // 'missing a required key'
         }
+        key = keyData <= this.k.length ? this.k[keyData] : boom() // 'out of bounds'
 
         // Plain assignment is safe here because obj has no prototype at
         // all, so there's no inherited __proto__ accessor to trigger
         switch (wireType) {
-            case WireType.Null:
-                obj[key] = null
-            break
-            case WireType.False:
-                obj[key] = false
-            break
-            case WireType.True:
-                obj[key] = true
-            break
-            case WireType.PosInt:
-                obj[key] = this.readVarint()
-            break
-            case WireType.Double:
-                obj[key] = this.readDouble()
-            break
-            case WireType.String:
-                obj[key] = this.readString()
-            break
-            case WireType.Object:
-                obj[key] = this.decodeObjectValue()
-            break
-            case WireType.Array:
-                obj[key] = this.decodeArrayValue()
-            break
-            default:
-                throw new Error(`velojson: unknown wire type ${wireType}`)
+            case WireType.N: obj[key] = null; break
+            case WireType.F: obj[key] = false; break
+            case WireType.T: obj[key] = true; break
+            case WireType.P: obj[key] = this.#readVarint(); break
+            case WireType.D: obj[key] = this.#readDouble(); break
+            case WireType.S: obj[key] = this.#readString(); break
+            case WireType.O: obj[key] = this.#decodeObjectValue(); break
+            case WireType.A: obj[key] = this.#decodeArrayValue(); break
+            default: boom() // 'unknown type'
         }
     }
-    private decodeArrayEntryValue(): JSONValue {
-        const header = this.readVarint()
-        let wireType: number
-        let keyData: number
-        if (header < UINT32_LIMIT) {
-            wireType = header & 7
-            keyData = header >>> 3
-        } else {
-            wireType = header % 8
-            keyData = Math.floor(header / 8)
-        }
 
-        if (keyData > 0) {
-            throw new Error('velojson: array entry must not have a key')
-        }
+    #decodeArrayEntryValue(): JSONValue {
+        const [wireType, keyData] = splitPacked(this.#readVarint(), 3)
+        if (keyData > 0) boom() // 'array invalid'
 
         switch (wireType) {
-            case WireType.Null:
-                return null
-            case WireType.False:
-                return false
-            case WireType.True:
-                return true
-            case WireType.PosInt:
-                return this.readVarint()
-            case WireType.Double:
-                return this.readDouble()
-            case WireType.String:
-                return this.readString()
-            case WireType.Object: {
-                return this.decodeObjectValue()
-            }
-            case WireType.Array: {
-                return this.decodeArrayValue()
-            }
-            default:
-                throw new Error(`velojson: unknown wire type ${wireType}`)
+            case WireType.N: return null
+            case WireType.F: return false
+            case WireType.T: return true
+            case WireType.P: return this.#readVarint()
+            case WireType.D: return this.#readDouble()
+            case WireType.S: return this.#readString()
+            case WireType.O: return this.#decodeObjectValue()
+            case WireType.A: return this.#decodeArrayValue()
+            default: return boom() // 'unknown type'
         }
     }
 }

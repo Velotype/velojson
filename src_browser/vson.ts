@@ -1,8 +1,7 @@
-
 import { ByteReader } from "./byte_reader.ts"
-import { acquireWriter, releaseWriter } from "./byte_writer.ts"
-import { EncodingFormat, getWireType, WireType, type JSONValue } from "./common.ts"
-import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeValue_key_table_format } from "./encode_keytable.ts"
+import { acquireWriter } from "./byte_writer.ts"
+import { boom, EncodingFormat_KeyTable, getWireType, WireType, type JSONValue } from "./common.ts"
+import { encodeArrayValue_key_table_format, encodeKeyTableValue, encodeObjectBody } from "./encode_keytable.ts"
 
 /**
  * Encode any JSON-representable value into a VSON binary buffer.
@@ -21,41 +20,27 @@ export function encodeVSON(value: any): Uint8Array<ArrayBuffer> {
         return new Uint8Array()
     }
 
-    // Set writerEncodingFormat
-    const writerEncodingFormat: EncodingFormat = EncodingFormat.KeyTable
-
     const writer = acquireWriter()
 
     const wireType = getWireType(value)
-    writer.writeVarint((writerEncodingFormat * 8) + wireType)
+    writer.wv(EncodingFormat_KeyTable * 8 + wireType)
+
     const writerStringTableMap: Map<string, number> = new Map<string, number>()
     const writerStringTableArray: string[] = []
-    switch (wireType) {
-        case WireType.Object: {
-            const bodyWriter = acquireWriter()
-            const obj = value as Record<string, JSONValue>
-            for (const k of Object.keys(obj)) {
-                encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerStringTableArray, writerStringTableMap)
-            }
-            const body = bodyWriter.toUint8Array()
-            writer.writeVarint(body.length)
-            writer.writeBytes(body)
-            releaseWriter(bodyWriter)
-        break
-        }
-        case WireType.Array:
-            encodeArrayValue_key_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
-        break
-        default:
-            throw new Error('velojson: KeyTable encoding format only supported for root Object or Array types')
+
+    if (wireType === WireType.O) {
+        encodeObjectBody(writer, value as Record<string, JSONValue>, writerStringTableArray, writerStringTableMap)
+    } else if (wireType === WireType.A) {
+        encodeArrayValue_key_table_format(writer, value as JSONValue[], writerStringTableArray, writerStringTableMap)
+    } else {
+        boom() // 'value invalid'
     }
     encodeKeyTableValue(writer, writerStringTableArray)
 
     // .slice() here so the public function returns an exact-length,
     // independently-owned buffer, not a view into a possibly-larger
     // over-allocated backing buffer.
-    const result = writer.toUint8Array().slice()
-    releaseWriter(writer)
+    const result = writer.u8().slice()
     return result
 }
 
@@ -76,9 +61,8 @@ export function encodeVSON(value: any): Uint8Array<ArrayBuffer> {
  */
 // deno-lint-ignore no-explicit-any
 export function decodeVSON(data: Uint8Array): any {
-    if (data.length == 0) {
+    if (data.length === 0) {
         return undefined
     }
-    const reader = new ByteReader(data)
-    return reader.decodeRootValue()
+    return new ByteReader(data).dR()
 }

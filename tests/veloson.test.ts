@@ -191,6 +191,8 @@ describe('test vson encoding and decoding', () => {
                         console.error('Actual decoded_browser:  ', JSON.stringify(decoded_browser), decoded_browser)
                         fail(`ERROR: ${name} failed explicit round-trip`)
                     } else if (encodingFormat === EncodingFormat.KeyTable && encoded_browser !== null && encoded.length !== encoded_browser.length) {
+                        // Note that this case only works at the moment because `itWrap()` is not used in cases
+                        // that trigger automatic Array homogeniety detection (browser code does not detect that case)
                         fail(`ERROR: ${name} browser encoded to a different length`)
                     } else {
                         if (encoded.length < jsonUtf8Bytes.length) {
@@ -282,19 +284,19 @@ describe('test vson encoding and decoding', () => {
 
     // Arrays
     itWrap([], 'empty array - Base', [], EncodingFormat.Base)
-    itWrap([], 'empty array - StringTable', [], EncodingFormat.KeyTable)
+    itWrap([], 'empty array - KeyTable', [], EncodingFormat.KeyTable)
     itWrap([1, 2, 3], 'flat array - Base', [1, 2, 3], EncodingFormat.Base)
-    itWrap([1, 2, 3], 'flat array - StringTable', [1, 2, 3], EncodingFormat.KeyTable)
+    itWrap([1, 2, 3], 'flat array - KeyTable', [1, 2, 3], EncodingFormat.KeyTable)
     itWrap([1, undefined as any, 2, 3], 'flat array with undefined - Base', [1, null as any, 2, 3], EncodingFormat.Base)
-    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - StringTable', [1, null as any, 2, 3], EncodingFormat.KeyTable)
+    itWrap([1, undefined as any, 2, 3], 'flat array with undefined - KeyTable', [1, null as any, 2, 3], EncodingFormat.KeyTable)
     itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - Base', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.Base)
-    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - StringTable', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.KeyTable)
+    itWrap([1, 'two', true, null, 3.5, [4, 5]], 'mixed nested array - KeyTable', [1, 'two', true, null, 3.5, [4, 5]], EncodingFormat.KeyTable)
 
     // Objects
     itWrap({}, 'empty object - Base', {}, EncodingFormat.Base)
-    itWrap({}, 'empty object - StringTable', {}, EncodingFormat.KeyTable)
+    itWrap({}, 'empty object - KeyTable', {}, EncodingFormat.KeyTable)
     itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - Base', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.Base)
-    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - StringTable', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.KeyTable)
+    itWrap({ a: 1, b: 'two', c: null, d: true }, 'flat object - KeyTable', { a: 1, b: 'two', c: null, d: true }, EncodingFormat.KeyTable)
     const protoObject = Object.create(null)
     protoObject.a = 1
     protoObject.b = 'two'
@@ -304,14 +306,14 @@ describe('test vson encoding and decoding', () => {
     protoObject.constructor = "test constructor"
     protoObject.d = null
     itWrap(protoObject, 'flat object with restricted keys - Base', protoObject, EncodingFormat.Base)
-    itWrap(protoObject, 'flat object with restricted keys - StringTable', protoObject, EncodingFormat.KeyTable)
+    itWrap(protoObject, 'flat object with restricted keys - KeyTable', protoObject, EncodingFormat.KeyTable)
     const nestedObject = {
         name: 'velojson',
         version: 1,
         tags: ['binary', 'json', 'wire-format'],
         meta: { author: 'test', stable: false, ratio: -0.5 },
     }
-    itWrap(nestedObject, 'nested object - StringTable', nestedObject, EncodingFormat.KeyTable)
+    itWrap(nestedObject, 'nested object - KeyTable', nestedObject, EncodingFormat.KeyTable)
 
     const bigShort = {
         users: Array.from({ length: 2 }, (_, i) => ({
@@ -345,14 +347,14 @@ describe('test vson encoding and decoding', () => {
 
     // Larger structural test
     itWrap(big, 'larger structure (50 users) - Base', big, EncodingFormat.Base)
-    itWrap(big, 'larger structure (50 users) - StringTable', big, EncodingFormat.KeyTable)
+    itWrap(big, 'larger structure (50 users) - KeyTable', big, EncodingFormat.KeyTable)
 
     itBinaryWrap({ a: 1 }, "Simple object encoding - Base", [6, 3, 11, 97, 1], EncodingFormat.Base)
-    itBinaryWrap({ a: 1 }, "Simple object encoding - StringTable", [14, 2, 11, 1, 2, 1, 97], EncodingFormat.KeyTable)
+    itBinaryWrap({ a: 1 }, "Simple object encoding - KeyTable", [14, 2, 11, 1, 2, 1, 97], EncodingFormat.KeyTable)
     itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - Base', [6, 13, 11, 97, 1, 13, 98, 3, 116, 119, 111, 10, 99, 8, 100], EncodingFormat.Base)
-    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - StringTable', [14, 9, 11, 1, 21, 3, 116, 119, 111, 26, 32, 8, 1, 97, 1, 98, 1, 99, 1, 100], EncodingFormat.KeyTable)
+    itBinaryWrap({ a: 1, b: 'two', c: true, d: null }, 'flat object encoding - KeyTable', [14, 9, 11, 1, 21, 3, 116, 119, 111, 26, 32, 8, 1, 97, 1, 98, 1, 99, 1, 100], EncodingFormat.KeyTable)
     itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - Base', [7, 14, 3, 1, 0, 3, 2, 3, 3], EncodingFormat.Base)
-    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - StringTable', [15, 14, 3, 1, 0, 3, 2, 3, 3, 0], EncodingFormat.KeyTable)
+    itBinaryWrap([1, undefined as any, 2, 3], 'flat arrayencoding - KeyTable', [15, 14, 3, 1, 0, 3, 2, 3, 3, 0], EncodingFormat.KeyTable)
 
     // Larger structural test
     const bigTricky = {
