@@ -2,6 +2,7 @@
 /**
  * Type representing encodable values (aka: plain JSON objects)
  */
+// deno-lint-ignore-file no-explicit-any
 export type JSONValue =
     | null
     | boolean
