@@ -1,4 +1,4 @@
-import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, VBINObjectMapper, WireType } from "./common.ts";
+import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, type VBINObjectMapper, WireType } from "./common.ts";
 
 export class ByteReader {
     private pos = 0
