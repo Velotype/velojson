@@ -1,169 +1,67 @@
-import { type ByteWriter, acquireWriter, releaseWriter } from "./byte_writer.ts"
-import { type JSONValue, WireType, HOMOGENEOUS_DETECTION_MIN_LENGTH, getWireType } from "./common.ts"
+import { type ByteWriter, acquireWriter } from "./byte_writer.ts"
+import { type JSONValue, WireType, getWireType, boom } from "./common.ts"
+
+/** Encodes `obj`'s fields into a fresh length-prefixed body and appends it to `writer`.
+ *  Shared by the three call sites that all used to duplicate this acquire/loop/length-prefix/release dance. */
+export function encodeObjectBody(writer: ByteWriter, obj: Record<string, JSONValue>, writerKeyTableArray: string[], writerKeyTableMap: Map<string, number>): void {
+    const bodyWriter = acquireWriter()
+    for (const k of Object.keys(obj)) {
+        encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
+    }
+    const body = bodyWriter.u8()
+    writer.wv(body.length)
+    writer.wn(body)
+}
 
 export function encodeArrayValue_key_table_format(writer: ByteWriter, arr: JSONValue[], writerKeyTableArray: string[], writerKeyTableMap: Map<string, number>): void {
-
-    let isAllNumbers = false
-    let homogeneousType: WireType | null = null
-    if (arr.length >= HOMOGENEOUS_DETECTION_MIN_LENGTH) {
-        let i = 0
-        const first_item = arr[i]
-        const firstType: WireType | null = getWireType(first_item === undefined ? null : first_item)
-        if (firstType === WireType.Null || firstType === WireType.False || firstType === WireType.True) {
-            homogeneousType = null
-            isAllNumbers = false
-        } else {
-            homogeneousType = firstType
-            if (firstType === WireType.PosInt || firstType === WireType.Double) {
-                isAllNumbers = true
-            }
-            i += 1
-            for (; i < arr.length; i++) {
-                const item = arr[i]
-                const item_wire_type = getWireType(item === undefined ? null : item)
-                if (item_wire_type === WireType.Null || item_wire_type === WireType.False || item_wire_type === WireType.True) {
-                    homogeneousType = null
-                    isAllNumbers = false
-                    break
-                } else if (item_wire_type !== firstType) {
-                    homogeneousType = null
-                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
-                        isAllNumbers = false
-                    }
-                    break
-                }
-            }
-            if (homogeneousType == null && isAllNumbers == true) {
-                for (; i < arr.length; i++) {
-                    const item = arr[i]
-                    const item_wire_type = getWireType(item === undefined ? null : item)
-                    if (typeof item_wire_type !== 'number') {
-                        isAllNumbers = false
-                        break
-                    }
-                }
-            }
-        }
-    }
-
     const bodyWriter = acquireWriter()
-    if (homogeneousType !== null) {
-        bodyWriter.writeByte(homogeneousType)
-        switch (homogeneousType) {
-            case WireType.PosInt:
-                for (let i = 0; i < arr.length; i++) {
-                    bodyWriter.writeVarint(arr[i] as number)
-                }
-            break
-
-            case WireType.Double:
-                for (let i = 0; i < arr.length; i++) {
-                    bodyWriter.writeDouble(arr[i] as number)
-                }
-            break
-
-            case WireType.String:
-                for (let i = 0; i < arr.length; i++) {
-                    bodyWriter.writeString(arr[i] as string)
-                }
-            break
-
-            case WireType.Object: {
-                for (let i = 0; i < arr.length; i++) {
-                    const subBodyWriter = acquireWriter()
-                    const obj = arr[i] as Record<string, JSONValue>
-                    for (const k of Object.keys(obj)) {
-                        encodeValue_key_table_format(subBodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
-                    }
-                    const body = subBodyWriter.toUint8Array()
-                    bodyWriter.writeVarint(body.length)
-                    bodyWriter.writeBytes(body)
-                    releaseWriter(subBodyWriter)
-                }
-            break
-            }
-
-            case WireType.Array:
-                for (let i = 0; i < arr.length; i++) {
-                    encodeArrayValue_key_table_format(bodyWriter, arr[i] as JSONValue[], writerKeyTableArray, writerKeyTableMap)
-                }
-            break
-        }
-    } else if (isAllNumbers) {
-        for (let i = 0; i < arr.length; i++) {
-            const value = arr[i] as number
-            if (Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value)) {
-                bodyWriter.writeByte(WireType.PosInt)
-                bodyWriter.writeVarint(value)
-            } else {
-                bodyWriter.writeByte(WireType.Double)
-                bodyWriter.writeDouble(value)
-            }
-        }
-    } else {
-        for (const item of arr) {
-            encodeValue_key_table_format(bodyWriter, null, item, true, writerKeyTableArray, writerKeyTableMap)
-        }
+    for (const item of arr) {
+        encodeValue_key_table_format(bodyWriter, null, item, true, writerKeyTableArray, writerKeyTableMap)
     }
-
-    const body = bodyWriter.toUint8Array()
-    writer.writeVarint((body.length * 2) + (homogeneousType !== null ? 1 : 0))
-    writer.writeBytes(body)
-    releaseWriter(bodyWriter)
+    const body = bodyWriter.u8()
+    writer.wv(body.length * 2)
+    writer.wn(body)
 }
 
 export function encodeValue_key_table_format(writer: ByteWriter, key: string | null, value: JSONValue, isInArray: boolean, writerKeyTableArray: string[], writerKeyTableMap: Map<string, number>): void {
-    if (value === undefined && isInArray === false) {
+    if (value === undefined && !isInArray) {
         return
     }
-    const wireType = getWireType((value === undefined && isInArray === true) ? null : value)
+    const wireType = getWireType(value === undefined && isInArray ? null : value)
     if (key === null) {
-        writer.writeVarint(wireType)
+        writer.wv(wireType)
     } else {
-        const keyIndex = writerKeyTableMap.get(key)
-        if (keyIndex !== undefined) {
-            writer.writeVarint((keyIndex * 8) + wireType)
-        } else {
+        let keyIndex = writerKeyTableMap.get(key)
+        if (keyIndex === undefined) {
             writerKeyTableArray.push(key)
-            writerKeyTableMap.set(key, writerKeyTableArray.length)
-            writer.writeVarint((writerKeyTableArray.length * 8) + wireType)
+            keyIndex = writerKeyTableArray.length
+            writerKeyTableMap.set(key, keyIndex)
         }
+        writer.wv(keyIndex * 8 + wireType)
     }
 
     switch (wireType) {
-        case WireType.Null:
-        case WireType.False:
-        case WireType.True:
-        break // no payload
-
-        case WireType.PosInt:
-            writer.writeVarint(value as number)
+        case WireType.P:
+            writer.wv(value as number)
         break
 
-        case WireType.Double:
-            writer.writeDouble(value as number)
+        case WireType.D:
+            writer.wd(value as number)
         break
 
-        case WireType.String:
-            writer.writeString(value as string)
+        case WireType.S:
+            writer.ws(value as string)
         break
 
-        case WireType.Object: {
-            const bodyWriter = acquireWriter()
-            const obj = value as Record<string, JSONValue>
-            for (const k of Object.keys(obj)) {
-                encodeValue_key_table_format(bodyWriter, k, obj[k], false, writerKeyTableArray, writerKeyTableMap)
-            }
-            const body = bodyWriter.toUint8Array()
-            writer.writeVarint(body.length)
-            writer.writeBytes(body)
-            releaseWriter(bodyWriter)
+        case WireType.O:
+            encodeObjectBody(writer, value as Record<string, JSONValue>, writerKeyTableArray, writerKeyTableMap)
         break
-        }
 
-        case WireType.Array:
+        case WireType.A:
             encodeArrayValue_key_table_format(writer, value as JSONValue[], writerKeyTableArray, writerKeyTableMap)
         break
+
+        // Null / False / True have no payload — nothing to write.
     }
 }
 
@@ -173,13 +71,12 @@ export function encodeKeyTableValue(writer: ByteWriter, arr: string[]): void {
     for (let i = 0; i < arr.length; i++) {
         const item = arr[i]
         if (item === undefined || item === null) {
-            throw new Error('velojson: string table cannot have undefined or null values')
+            boom() // 'KeyTable invalid'
         }
-        bodyWriter.writeString(item)
+        bodyWriter.ws(item)
     }
 
-    const body = bodyWriter.toUint8Array()
-    writer.writeVarint(body.length)
-    writer.writeBytes(body)
-    releaseWriter(bodyWriter)
+    const body = bodyWriter.u8()
+    writer.wv(body.length)
+    writer.wn(body)
 }
