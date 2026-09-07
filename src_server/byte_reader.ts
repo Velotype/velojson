@@ -295,7 +295,7 @@ export class ByteReader {
             if (this.encodingFormat === EncodingFormat.Base) {
                 key = textDecoder.decode(this.readBytes(keyData))
             } else if (this.encodingFormat === EncodingFormat.KeyTable) {
-                if (keyData <= this.keyArray.length) {
+                if (keyData < this.keyArray.length) {
                     key = this.keyArray[keyData]
                 } else {
                     throw new Error('velojson: key index out of bounds')

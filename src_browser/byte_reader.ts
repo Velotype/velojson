@@ -189,7 +189,7 @@ export class ByteReader {
         if (keyData === 0) {
             key = boom() // 'missing a required key'
         }
-        key = keyData <= this.k.length ? this.k[keyData] : boom() // 'out of bounds'
+        key = keyData < this.k.length ? this.k[keyData] : boom() // 'out of bounds'
 
         // Plain assignment is safe here because obj has no prototype at
         // all, so there's no inherited __proto__ accessor to trigger
