@@ -23,16 +23,16 @@ console.log(JSON.stringify(endObj))
 ## Performance:
 
 ### For size:
-Velojson supports three encoding formats:
+Velojson supports three encoding formats. All size ranges below are measured against plain JSON text, not against each other — KeyTable and VBIN are not necessarily smaller than each other by these amounts, since that depends heavily on how many keys repeat in the data (see each section).
 
 #### VSON - Base format:
-VSON Base format is moderately compressed compared to JSON, consistenty using fewer bytes in nearly all cases though only by 10%-20% for most objects. This is because the VSON Base format directly replicates the structure of JSON. The advantage of this design is that VSON Base can be used in situations envolving streaming and partial decoding.
+VSON Base format is moderately compressed compared to JSON, consistently using fewer bytes in nearly all cases, typically by 20%-25%. This is because the VSON Base format directly replicates the structure of JSON. The advantage of this design is that VSON Base can be used in situations envolving streaming and partial decoding.
 
 #### VSON - Key Table format:
-VSON Key Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once and depending on the shape of the JSON object this can generate high compression rates, with 50% - 80% size reduction reasonable depending on how many keys are duplicated in the data.
+VSON Key Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once, so compared to JSON this ranges from about 20% smaller (a single object, or many objects with mostly-unique keys, where the key table itself adds overhead with little to deduplicate) up to about 65% smaller (many records sharing the same wide set of keys) depending on how many keys are duplicated in the data.
 
 #### VBIN - Key Id format:
-The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. VBIN offers only marginal size reduction from the KeyTable format since the KeyTable is skipped (this is usually small), however VBIN offers significant performance improvement because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
+The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. Compared to JSON, this typically ranges from about 25% to about 70% smaller, following the same shape-dependent pattern as Key Table but skipping the table's own overhead entirely. VBIN also offers a significant performance improvement over both other formats, because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
 
 ### For timing:
 The VSON encodings typically run slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers, VSON outperforms - though this is rare).
