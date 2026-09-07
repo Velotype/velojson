@@ -34,36 +34,46 @@ function deepEqual(a: unknown, b: unknown, strict: boolean): boolean {
     return false
 }
 
-type BigObjType = {
-    users: { // keyid = 1
-        id: number // keyid = 1
-        name: string // keyid = 2
-        active: boolean // keyid = 3
-        score: number // keyid = 4
-        tags: string[] // keyid = 5
-    }[]
+type BigObjUserType = {
+    id: number // keyid = 1
+    name: string // keyid = 2
+    active: boolean // keyid = 3
+    score: number // keyid = 4
+    tags: string[] // keyid = 5
 }
 
-function encodeBigObj(inObj: BigObjType): Uint8Array<ArrayBufferLike> {
+type BigObjType = {
+    users: BigObjUserType[] // keyid = 1
+}
+
+function encodeBigObjRoot(inObj: BigObjType): Uint8Array<ArrayBufferLike> {
     const rootWriter = new VBINRootWriter()
     const rootObj = rootWriter.startRootObject()
+    encodeBigObjFunc(rootObj, inObj)
+    rootWriter.finalizeRootObject(rootObj)
+    return rootWriter.toUint8ArrayAndRelease()
+}
+
+function encodeBigObjUserFunc(writer: VBINObjectWriter, userObj: BigObjUserType) {
+    writer.encodePosIntValue(1, userObj.id)
+    writer.encodeStringValue(2, userObj.name)
+    writer.encodeBooleanValue(3, userObj.active)
+    writer.encodeNumberValue(4, userObj.score)
+    const tagsArray = new VBINHomogenousStringArrayWriter()
+    userObj.tags.forEach(tag => {
+        tagsArray.encodeStringValueInHomogenousArray(tag)
+    })
+    writer.finalizeHomogenousStringArray(5, tagsArray)
+}
+
+function encodeBigObjFunc(writer: VBINObjectWriter, inObj: BigObjType) {
     const usersArray = new VBINHomogenousObjectArrayWriter()
     inObj.users.forEach(userObj => {
         const userVBIN = new VBINObjectWriter()
-        userVBIN.encodePosIntValue(1, userObj.id)
-        userVBIN.encodeStringValue(2, userObj.name)
-        userVBIN.encodeBooleanValue(3, userObj.active)
-        userVBIN.encodeNumberValue(4, userObj.score)
-        const tagsArray = new VBINHomogenousStringArrayWriter()
-        userObj.tags.forEach(tag => {
-            tagsArray.encodeStringValueInHomogenousArray(tag)
-        })
-        userVBIN.finalizeHomogenousStringArray(5, tagsArray)
+        encodeBigObjUserFunc(userVBIN, userObj)
         usersArray.finalizeObjectInHomogenousArray(userVBIN)
     })
-    rootObj.finalizeHomogenousObjectArray(1, usersArray)
-    rootWriter.finalizeRootObject(rootObj)
-    return rootWriter.toUint8ArrayAndRelease()
+    writer.finalizeHomogenousObjectArray(1, usersArray)
 }
 
 const BigObjTypeUsersMapper: VBINObjectMapper = {
@@ -239,7 +249,7 @@ describe('test vson encoding and decoding', () => {
             fn: () => {
                 try {
                     const jsonCompare = JSON.stringify(value)
-                    const encoded = encodeBigObj(value)
+                    const encoded = encodeBigObjRoot(value)
                     const encodedArray = Array.from(encoded)
                     const vbinDecode = VBIN.decode(encoded, BigObjTypeMapper)
                     const vsonDecode = VSON.decode(encoded)
@@ -482,7 +492,7 @@ describe('test vson encoding and decoding', () => {
 
                 const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
-                    const obj = VBIN.decode(encodeBigObj(bigTricky), BigObjTypeMapper)
+                    const obj = VBIN.decode(encodeBigObjRoot(bigTricky), BigObjTypeMapper)
                     totalLen += obj.users.length
                 }
                 const endVSON = performance.now()
@@ -515,7 +525,7 @@ describe('test vson encoding and decoding', () => {
                 const startVSON = performance.now()
                 let totalVLen = 0
                 for (let i: number = 1; i <= iterations; i++) {
-                    const str = encodeBigObj(bigTricky)
+                    const str = encodeBigObjRoot(bigTricky)
                     totalVLen += str.length
                 }
                 const endVSON = performance.now()
@@ -546,7 +556,7 @@ describe('test vson encoding and decoding', () => {
                 const endJSON = performance.now()
                 const timeJSON = endJSON - startJSON
 
-                const binObj = encodeBigObj(bigTricky)
+                const binObj = encodeBigObjRoot(bigTricky)
                 const startVSON = performance.now()
                 for (let i: number = 1; i <= iterations; i++) {
                     const obj = VBIN.decode(binObj, BigObjTypeMapper)
