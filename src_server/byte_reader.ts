@@ -128,9 +128,6 @@ export class ByteReader {
                     }
                 break
                 case WireType.Double:
-                    if (this.pos + 8 > this.limit) {
-                        throw new Error('velojson: unexpected end of buffer')
-                    }
                     if ((this.limit - this.pos) % 8 != 0) {
                         throw new Error('velojson: unexpected end of buffer')
                     }
@@ -229,6 +226,10 @@ export class ByteReader {
             encodingFormat = Math.floor(header / 8)
         }
         this.encodingFormat = encodingFormat
+
+        if (mapper !== undefined && encodingFormat !== EncodingFormat.KeyID) {
+            throw new Error('velojson: VBIN decode requires a VBIN (KeyID format) message')
+        }
 
         if (encodingFormat === EncodingFormat.Base) {
             switch (wireType) {
@@ -342,6 +343,8 @@ export class ByteReader {
             } else {
                 throw new Error('velojson: encoding format not recognized')
             }
+        } else if (this.encodingFormat === EncodingFormat.Base) {
+            key = ""
         } else {
             throw new Error('velojson: object field is missing a required key')
         }

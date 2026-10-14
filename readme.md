@@ -121,7 +121,7 @@ C - `{LENGTH}{VALUE?}`
 
 LENGTH is encoded as a pos varint (or zero)
 
-VALUE is a series of `VStruct` encoded values with a requirement that all have non-zero key length
+VALUE is a series of `VStruct` encoded values, each with a key (in the Base format a key length of zero encodes the empty-string key `""`)
 
 ### 7 - array
 

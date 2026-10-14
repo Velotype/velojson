@@ -110,7 +110,7 @@ export class ByteReader {
                     }
                 break
                 case WireType.D:
-                    if (this.p + 8 > this.m || (this.m - this.p) % 8 !== 0) {
+                    if ((this.m - this.p) % 8 !== 0) {
                         boom() // 'unexpected eob'
                     }
                     while (this.m > this.p) {

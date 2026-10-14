@@ -123,7 +123,7 @@ export function getWireType(value: JSONValue): WireType {
 export const UINT32_LIMIT = 0x100000000
 
 export const textEncoder = new TextEncoder()
-export const textDecoder = new TextDecoder('utf-8', { fatal: true })
+export const textDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 /** Threshold for detection of homogenous arrays - arrays above this length will be tested for homogeneity */
 export const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64

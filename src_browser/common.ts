@@ -66,7 +66,7 @@ export function getWireType(value: JSONValue): WireType {
 }
 
 export const textEncoder = new TextEncoder()
-export const textDecoder = new TextDecoder('utf-8', { fatal: true })
+export const textDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 export function boom(): never {
     throw new Error('vson error')

@@ -27,17 +27,19 @@ export function encodeArrayValue_key_table_format(writer: ByteWriter, arr: JSONV
                     break
                 } else if (item_wire_type !== firstType) {
                     homogeneousType = null
-                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
+                    if (!isAllNumbers) {
+                        break
+                    } else if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
                         isAllNumbers = false
+                        break
                     }
-                    break
                 }
             }
             if (homogeneousType == null && isAllNumbers == true) {
                 for (; i < arr.length; i++) {
                     const item = arr[i]
                     const item_wire_type = getWireType(item === undefined ? null : item)
-                    if (typeof item_wire_type !== 'number') {
+                    if (item_wire_type !== WireType.PosInt && item_wire_type !== WireType.Double) {
                         isAllNumbers = false
                         break
                     }
