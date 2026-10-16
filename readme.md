@@ -32,12 +32,10 @@ VSON Base format is moderately compressed compared to JSON, consistently using f
 VSON Key Table format is very similar to the Base format however all keys are segregated into a string array appended to the root value and key indexes are used to index into that array. This means that every unique key is encoded only once, so compared to JSON this ranges from about 20% smaller (a single object, or many objects with mostly-unique keys, where the key table itself adds overhead with little to deduplicate) up to about 65% smaller (many records sharing the same wide set of keys) depending on how many keys are duplicated in the data.
 
 #### VBIN - Key Id format:
-The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. Compared to JSON, this typically ranges from about 25% to about 70% smaller, following the same shape-dependent pattern as Key Table but skipping the table's own overhead entirely. VBIN also offers a significant performance improvement over both other formats, because the key names do not need to be encoded/decoded from UTF-8 and used as a string index on the constructed object.
+The VBIN Key Id format is very similar to the Key Table format however the Key Table is not included in the message. This means that the encoder and decoder need to already have agreed on a Key Id mapping ahead of time to be able to encode/decode messages. Compared to JSON, this typically ranges from about 25% to about 70% smaller, following the same shape-dependent pattern as Key Table but skipping the table's own overhead entirely. VBIN also never encodes or decodes the key names as UTF-8 strings, or uses them as a string index on the constructed object.
 
 ### For timing:
-The VSON encodings typically run slower than native `JSON.stringify()` and `JSON.parse()` in most cases (for the specific case of many complex numbers, VSON outperforms - though this is rare).
-
-The VBIN encoding performs significantly faster than native JSON encoding.
+The formats are implemented in TypeScript, and typically run slower than the engine's native `JSON.stringify()` and `JSON.parse()` (for the specific case of many complex numbers, VSON outperforms - though this is rare). Choose them for the smaller payload.
 
 ## Exported modules:
 
