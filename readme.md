@@ -166,6 +166,11 @@ C - the encoded value of the wire type (encoding depends on the wire type)
 
 ## VBIN - Key Id Encoding format:
 
+Both sides know the schema, so a field may hold raw bytes in the String wire type (its
+payload is `{length}{bytes}`, not UTF-8): the writer uses `encodeBytesValue`, and the reader's
+mapper answers "bytes" from `fieldKind`. A field the mapper answers "skip" for is moved past
+unchecked, so a reader on an older schema can ignore a newer field that holds anything.
+
 VRoot - `{A: encoding format (2) ++ wire type}{C: encoded value}`
 
 A - a pos varint constructed by encoding the bits of the encoding format and appending 3 bits representing the wire type of the root value (must be either Object or Array)

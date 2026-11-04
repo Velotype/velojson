@@ -2,7 +2,7 @@
  * velojson (VSON) — binary encoder/decoder for JSON-representable data.
  */
 
-import { EncodingFormat, type VBINObjectMapper, WireType, type JSONValue } from "./common.ts"
+import { EncodingFormat, type VBINFieldKind, type VBINObjectMapper, WireType, type JSONValue } from "./common.ts"
 import { VBINRootWriter, VBINObjectWriter, VBINArrayWriter, VBINHomogenousStringArrayWriter, VBINHomogenousPosIntArrayWriter, VBINHomogenousDoubleArrayWriter, VBINHomogenousObjectArrayWriter, VBINNumberArrayWriter } from "./encode_keyid.ts"
 import { decodeVBIN, decodeVSON, encodeVSON } from "./vson.ts"
 
@@ -11,6 +11,7 @@ export {
     EncodingFormat,
     type JSONValue,
 
+    type VBINFieldKind,
     type VBINObjectMapper,
 
     VBINRootWriter,

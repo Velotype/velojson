@@ -115,6 +115,7 @@ const BigObjTypeUsersMapper: VBINObjectMapper = {
             }
         }
     },
+    fieldKind: () => "value" as const,
     hasAllRequiredFields: function (object: any): boolean {
         if (object.id === undefined) {
             console.log("id not defined")
@@ -155,6 +156,7 @@ const BigObjTypeMapper: VBINObjectMapper = {
             }
         }
     },
+    fieldKind: () => "value" as const,
     hasAllRequiredFields: function (object: any): boolean {
         if (object.users === undefined) {
             console.log("users not defined")

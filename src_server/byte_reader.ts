@@ -1,4 +1,4 @@
-import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, type VBINObjectMapper, WireType } from "./common.ts";
+import { EncodingFormat, type JSONValue, textDecoder, UINT32_LIMIT, type VBINFieldKind, type VBINObjectMapper, WireType } from "./common.ts";
 
 export class ByteReader {
     private pos = 0
@@ -65,9 +65,22 @@ export class ByteReader {
         return value
     }
 
-    private readString(): string {
+    /** The kind of the VBIN field being read; only VBIN, with a mapper, ever changes it */
+    private fieldKind: VBINFieldKind = "value"
+
+    // deno-lint-ignore no-explicit-any
+    private decodeString(bytes: Uint8Array): any {
+        const kind = this.fieldKind
+        if (kind === "value") {
+            return textDecoder.decode(bytes)
+        }
+        return kind === "skip" ? "" : bytes.slice()
+    }
+
+    // deno-lint-ignore no-explicit-any
+    private readString(): any {
         const len = this.readVarint()
-        return textDecoder.decode(this.readBytes(len))
+        return this.decodeString(this.readBytes(len))
     }
 
     private decodeObjectValue(mapper?: VBINObjectMapper): Record<string, JSONValue> {
@@ -141,7 +154,7 @@ export class ByteReader {
                     arr = []
                     while (this.limit > this.pos) {
                         const len = this.readVarint()
-                        arr.push(textDecoder.decode(this.readBytes(len)))
+                        arr.push(this.decodeString(this.readBytes(len)))
                     }
                 break
                 case WireType.Object: {
@@ -205,7 +218,7 @@ export class ByteReader {
         arr.push("")
         while (this.limit > this.pos) {
             const len = this.readVarint()
-            arr.push(textDecoder.decode(this.readBytes(len)))
+            arr.push(this.decodeString(this.readBytes(len)))
         }
 
         // exitSection
@@ -305,6 +318,11 @@ export class ByteReader {
                 if (mapper === undefined) {
                     key = String(keyData)
                 } else {
+                    // (Only these wire types can hold a string. What a skipped field holds is all skipped.)
+                    const outerKind = this.fieldKind
+                    if (wireType >= WireType.String && outerKind !== "skip") {
+                        this.fieldKind = mapper.fieldKind(keyData)
+                    }
                     switch (wireType) {
                         case WireType.Null:
                             mapper.assignValue(obj, keyData, null)
@@ -338,6 +356,7 @@ export class ByteReader {
                         default:
                             throw new Error(`velojson: unknown wire type ${wireType}`)
                     }
+                    this.fieldKind = outerKind
                     return
                 }
             } else {
