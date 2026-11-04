@@ -1,6 +1,14 @@
 import { type ByteWriter, acquireWriter, releaseWriter } from "./byte_writer.ts"
 import { WireType, EncodingFormat } from "./common.ts"
 
+/** Raw bytes are written as they are, so what isn't bytes has to be stopped here (as the native codec does) */
+function checkedBytes(value: Uint8Array): Uint8Array {
+    if (!(value instanceof Uint8Array)) {
+        throw new TypeError("velojson: expected a Uint8Array")
+    }
+    return value
+}
+
 export class VBINRootWriter {
     private writer: ByteWriter = acquireWriter()
 
@@ -68,6 +76,15 @@ export class VBINObjectWriter {
         if (value !== undefined) {
             this.writer.writeVarint((key_id * 8) + WireType.String)
             this.writer.writeString(value)
+        }
+    }
+    /** Raw bytes, in the string wire slot: the reader's mapper has to say this field is "bytes" */
+    encodeBytesValue(key_id: number, value: Uint8Array | undefined): void {
+        if (value !== undefined) {
+            checkedBytes(value)
+            this.writer.writeVarint((key_id * 8) + WireType.String)
+            this.writer.writeVarint(value.length)
+            this.writer.writeBytes(value)
         }
     }
     finalizeObject(key_id: number, childWriter: VBINObjectWriter): void {
@@ -199,6 +216,12 @@ export class VBINHomogenousStringArrayWriter {
     }
     encodeStringValueInHomogenousArray(value: string): void {
         this.writer.writeString(value)
+    }
+    /** Raw bytes, as `VBINObjectWriter.encodeBytesValue` */
+    encodeBytesValueInHomogenousArray(value: Uint8Array): void {
+        checkedBytes(value)
+        this.writer.writeVarint(value.length)
+        this.writer.writeBytes(value)
     }
 }
 

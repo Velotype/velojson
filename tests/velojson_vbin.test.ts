@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import {
     VBIN,
+    type VBINFieldKind,
     type VBINObjectMapper,
     VBINRootWriter,
     VBINObjectWriter,
@@ -97,6 +98,7 @@ const AddressMapper: VBINObjectMapper = {
             case 2: o.zip = value; break
         }
     },
+    fieldKind: () => "value" as const,
     hasAllRequiredFields: (o: any): boolean => o.city !== undefined && o.zip !== undefined,
     fieldMapper: (): VBINObjectMapper | undefined => undefined,
 }
@@ -118,6 +120,7 @@ const ProductMapper: VBINObjectMapper = {
             case 10: o.address = value; break
         }
     },
+    fieldKind: () => "value" as const,
     hasAllRequiredFields: (o: any): boolean => REQUIRED_PRODUCT_FIELDS.every(k => o[k] !== undefined),
     fieldMapper: (keyID: number): VBINObjectMapper | undefined => keyID === 10 ? AddressMapper : undefined,
 }
@@ -192,9 +195,147 @@ describe('VBIN advanced writer/reader API', () => {
 
         const noFieldMapper: VBINObjectMapper = {
             assignValue: () => {},
+            fieldKind: () => "value" as const,
             hasAllRequiredFields: () => true,
             fieldMapper: () => undefined,
         }
         assertThrows(() => VBIN.decode(encoded, noFieldMapper), Error, 'unknown field keyID')
+    })
+})
+
+describe('VBIN field kinds', () => {
+    // Field 1 is known, field 2 holds `write`'s value, field 3 is known and written last
+    const MARK = "ZQZQ"
+    const NOT_UTF8 = new Uint8Array([0xff, 0xfe, 0x80, 0xc0])
+    function message(write: (w: VBINObjectWriter) => void, last = "end"): Uint8Array {
+        const root = new VBINRootWriter()
+        const obj = root.startRootObject()
+        obj.encodePosIntValue(1, 7)
+        write(obj)
+        obj.encodeStringValue(3, last)
+        root.finalizeRootObject(obj)
+        return root.toUint8ArrayAndRelease()
+    }
+    /** Every MARK in `bytes` overwritten with bytes that aren't UTF-8 */
+    function corrupt(bytes: Uint8Array): Uint8Array {
+        const out = bytes.slice()
+        let found = 0
+        for (let i = 0; i + MARK.length <= out.length; i++) {
+            if (String.fromCharCode(...out.subarray(i, i + MARK.length)) === MARK) {
+                out.set(NOT_UTF8, i)
+                found++
+            }
+        }
+        assertEquals(found > 0, true)
+        return out
+    }
+    const Skip: VBINObjectMapper = {
+        assignValue: (): void => {},
+        hasAllRequiredFields: (): boolean => true,
+        fieldMapper: (): VBINObjectMapper => Skip,
+        fieldKind: () => "skip",
+    }
+    const Nested: VBINObjectMapper = {
+        assignValue: (): void => {},
+        hasAllRequiredFields: (): boolean => true,
+        fieldMapper: (): VBINObjectMapper => Skip,
+        fieldKind: () => "value",
+    }
+    function reader(field2: VBINFieldKind): VBINObjectMapper {
+        return {
+            assignValue: (o: any, keyID: number, value: any): void => {
+                if (keyID === 1) { o.id = value } else if (keyID === 2) { o.field2 = value } else if (keyID === 3) { o.last = value }
+            },
+            hasAllRequiredFields: (): boolean => true,
+            fieldMapper: (): VBINObjectMapper => field2 === "skip" ? Skip : Nested,
+            fieldKind: (keyID: number) => keyID === 2 ? field2 : "value",
+        }
+    }
+    const decoded = (bytes: Uint8Array, kind: VBINFieldKind): any => ({...VBIN.decode(bytes as Uint8Array<ArrayBuffer>, reader(kind)) as any})
+
+    const values: [string, (w: VBINObjectWriter) => void][] = [
+        ['a string', w => w.encodeStringValue(2, MARK)],
+        ['a homogeneous string array', w => {
+            const tags = new VBINHomogenousStringArrayWriter()
+            tags.encodeStringValueInHomogenousArray(MARK)
+            tags.encodeStringValueInHomogenousArray(MARK)
+            w.finalizeHomogenousStringArray(2, tags)
+        }],
+        ['a mixed array', w => {
+            const misc = new VBINArrayWriter()
+            misc.encodeBooleanValueInArray(true)
+            misc.encodeStringValueInArray(MARK)
+            w.finalizeArray(2, misc)
+        }],
+        ['a nested object', w => {
+            const nested = new VBINObjectWriter()
+            nested.encodeStringValue(1, MARK)
+            w.finalizeObject(2, nested)
+        }],
+        ['an array of objects', w => {
+            const nested = new VBINObjectWriter()
+            nested.encodeStringValue(1, MARK)
+            const arr = new VBINHomogenousObjectArrayWriter()
+            arr.finalizeObjectInHomogenousArray(nested)
+            w.finalizeHomogenousObjectArray(2, arr)
+        }],
+    ]
+    for (const [what, write] of values) {
+        it(`"skip" moves past ${what} that isn't UTF-8, and reads on`, () => {
+            const value = decoded(corrupt(message(write)), "skip")
+            assertEquals([value.id, value.last], [7, "end"])
+        })
+        it(`"value" refuses ${what} that isn't UTF-8`, () => {
+            assertThrows(() => decoded(corrupt(message(write)), "value"))
+        })
+    }
+    it("still refuses a known field that isn't UTF-8, after a skipped one", () => {
+        assertThrows(() => decoded(corrupt(message(w => w.encodeStringValue(2, "fine"), MARK)), "skip"))
+    })
+    it('still checks the structure of a skipped field', () => {
+        const bytes = message(w => w.encodeStringValue(2, MARK))
+        assertThrows(() => decoded(bytes.subarray(0, bytes.length - 8), "skip"))
+    })
+
+    it('"bytes" hands over raw bytes that aren\'t UTF-8', () => {
+        const value = decoded(message(w => w.encodeBytesValue(2, NOT_UTF8)), "bytes")
+        assertEquals([value.id, value.last], [7, "end"])
+        assertEquals(value.field2, NOT_UTF8)
+    })
+    it('"bytes" is raw on the wire: the payload itself, with no base64', () => {
+        const bytes = message(w => w.encodeBytesValue(2, NOT_UTF8))
+        assertEquals(bytes.join().includes(NOT_UTF8.join()), true)
+    })
+    it('"bytes" gives a copy, not a view of the message', () => {
+        const bytes = message(w => w.encodeBytesValue(2, NOT_UTF8))
+        const value = decoded(bytes, "bytes")
+        bytes.fill(0)
+        assertEquals(value.field2, NOT_UTF8)
+        assertEquals(value.field2.buffer.byteLength, NOT_UTF8.length)
+    })
+    it('"bytes" takes no bytes at all', () => {
+        assertEquals(decoded(message(w => w.encodeBytesValue(2, new Uint8Array(0))), "bytes").field2, new Uint8Array(0))
+    })
+    it('"bytes" takes an array of them', () => {
+        const arr = new VBINHomogenousStringArrayWriter()
+        arr.encodeBytesValueInHomogenousArray(NOT_UTF8)
+        arr.encodeBytesValueInHomogenousArray(new Uint8Array(0))
+        const value = decoded(message(w => w.finalizeHomogenousStringArray(2, arr)), "bytes")
+        assertEquals(value.field2, [NOT_UTF8, new Uint8Array(0)])
+    })
+    it('"value" refuses raw bytes that aren\'t UTF-8', () => {
+        assertThrows(() => decoded(message(w => w.encodeBytesValue(2, NOT_UTF8)), "value"))
+    })
+    it('an older reader skips raw bytes', () => {
+        const value = decoded(message(w => w.encodeBytesValue(2, NOT_UTF8)), "skip")
+        assertEquals([value.id, value.last], [7, "end"])
+    })
+    it('writing what isn\'t bytes throws, as the native codec does', () => {
+        const notBytes = [1, 2] as unknown as Uint8Array
+        assertThrows(() => message(w => w.encodeBytesValue(2, notBytes)), TypeError)
+        assertThrows(() => new VBINHomogenousStringArrayWriter().encodeBytesValueInHomogenousArray(notBytes), TypeError)
+    })
+    it('a field after "bytes" reads as usual', () => {
+        assertThrows(() => decoded(corrupt(message(w => w.encodeBytesValue(2, NOT_UTF8), MARK)), "bytes"))
     })
 })

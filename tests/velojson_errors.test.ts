@@ -70,6 +70,7 @@ describe('malformed input / decode error handling', () => {
         // since VSON.decode()'s debug path and any hand-rolled encoder could reach it.
         const dummyMapper: VBINObjectMapper = {
             assignValue: () => {},
+            fieldKind: () => "value" as const,
             hasAllRequiredFields: () => true,
             fieldMapper: () => undefined,
         }

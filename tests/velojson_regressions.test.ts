@@ -98,6 +98,7 @@ describe('empty homogeneous double arrays', () => {
         root.finalizeRootObject(w)
         const mapper: VBINObjectMapper = {
             assignValue: (o, _k, v) => { o.values = v },
+            fieldKind: () => "value" as const,
             hasAllRequiredFields: () => true,
             fieldMapper: () => undefined,
         }
@@ -112,7 +113,7 @@ describe('empty homogeneous double arrays', () => {
 describe('VBIN.decode only accepts VBIN messages', () => {
     // A Base or KeyTable message passed to VBIN.decode used to decode as plain
     // VSON, ignoring the mapper (e.g. returning a bare number).
-    const mapper: VBINObjectMapper = { assignValue: () => {}, hasAllRequiredFields: () => true, fieldMapper: () => undefined }
+    const mapper: VBINObjectMapper = { assignValue: () => {}, fieldKind: () => "value" as const, hasAllRequiredFields: () => true, fieldMapper: () => undefined }
     it('rejects a Base message', () => {
         assertThrows(() => VBIN.decode(new Uint8Array([3, 132, 1]), mapper), Error, 'requires a VBIN')
     })

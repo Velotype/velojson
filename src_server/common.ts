@@ -128,8 +128,18 @@ export const textDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: tr
 /** Threshold for detection of homogenous arrays - arrays above this length will be tested for homogeneity */
 export const HOMOGENEOUS_DETECTION_MIN_LENGTH = 64
 
+/**
+ * How a VBIN reader treats what a field holds in the string wire slot:
+ * - "value": decodes it as a string, which must be UTF-8
+ * - "bytes": hands over the raw bytes, as a `Uint8Array` of its own
+ * - "skip": moves past it, unchecked; the mapper gets "" (a field it doesn't know, which may hold anything)
+ */
+export type VBINFieldKind = "value" | "bytes" | "skip"
+
 export type VBINObjectMapper = {
     assignValue: (object: any, keyID: number, value: any) => void
     hasAllRequiredFields: (object: any) => boolean
     fieldMapper: (keyID: number) => VBINObjectMapper | undefined
+    /** How to read this field; asked for fields that can hold a string (strings, objects and arrays) */
+    fieldKind: (keyID: number) => VBINFieldKind
 }
