@@ -1,0 +1,43 @@
+name: CI
+
+# Runs on every pull request into main and every push to main. A person merges once these pass.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint and publish dry run
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Lint
+        run: deno lint
+
+      # Type checks the package as JSR will see it, and finds a packaging problem now rather than
+      # during a publish: a JSR version is immutable, so a bad one is permanent.
+      - name: Publish dry run
+        run: deno publish --dry-run
+
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run the tests
+        run: deno task test
