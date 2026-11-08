@@ -1,4 +1,4 @@
-import { VSON, EncodingFormat, VBIN, type VBINObjectMapper, VBINRootWriter, VBINObjectWriter } from '../src_server/velojson.ts'
+import { VSON, EncodingFormat, VBIN, type VBINObjectMapper, VBINRootWriter } from '../src_server/velojson.ts'
 import { VSON as VSON_browser } from '../src_browser/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { assertThrows } from "@std/assert"

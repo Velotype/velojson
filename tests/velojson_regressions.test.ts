@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
 import { VSON, type JSONValue, EncodingFormat, VBIN, VBINRootWriter, VBINHomogenousDoubleArrayWriter, type VBINObjectMapper } from '../src_server/velojson.ts'
 import { VSON as VSON_browser } from '../src_browser/velojson.ts'
 import { HOMOGENEOUS_DETECTION_MIN_LENGTH } from '../src_server/common.ts'

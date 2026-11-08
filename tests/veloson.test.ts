@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter, VBINObjectMapper, VBIN } from '../src_server/velojson.ts'
+import { VSON, type JSONValue, EncodingFormat, VBINRootWriter, VBINObjectWriter, VBINHomogenousStringArrayWriter, VBINHomogenousObjectArrayWriter, type VBINObjectMapper, VBIN } from '../src_server/velojson.ts'
 import { VSON as VSON_browser } from '../src_browser/velojson.ts'
 import { describe, it } from "@std/testing/bdd"
 import { fail } from "@std/assert"
