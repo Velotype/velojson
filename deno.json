@@ -13,6 +13,7 @@
         ]
     },
     "tasks": {
+        "check-baseline": "deno run --no-lock --allow-read jsr:@velotype/velobaseline@0.1.1 src_browser/",
         "test": "cd tests && deno test",
         "browser_bundle": "deno bundle --minify ./src_browser/velojson.ts --output ./dist/velojson_browser.min.js --sourcemap"
     }
